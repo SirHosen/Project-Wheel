@@ -102,8 +102,31 @@ class MainViewModel:
             
         return allocs
 
+    def get_predictions_async(self, callback):
+        """Run prediction OFF the UI thread, then invoke callback(allocs).
+        Prevents the window from freezing while the LSTM model predicts."""
+        def _task():
+            try:
+                allocs = self.get_predictions()
+            except Exception:
+                import logging
+                logging.exception("Prediction failed")
+                allocs = []
+            callback(allocs)
+        threading.Thread(target=_task, daemon=True).start()
+
+    def set_initial_capital(self, amount: int):
+        """Set the starting bankroll (modal token)."""
+        with self._lock:
+            self.current_capital = int(amount)
+            self.tracker.data["current_capital"] = int(amount)
+            self.tracker.save_data()
+
     def get_stats(self) -> dict:
         return self.tracker.get_stats()
+
+    def get_advanced_stats(self) -> dict:
+        return self.tracker.get_advanced_stats()
         
     def get_tf_metrics(self) -> dict:
         if not self.lstm_engine.history_metrics['loss']:

@@ -100,6 +100,39 @@ class Tracker:
             else:
                 break
         return streak
+
+    def get_max_win_streak(self) -> int:
+        """Returns the longest win streak ever achieved."""
+        history = self.data.get("history", [])
+        best = cur = 0
+        for record in history:
+            if record.get("is_win", False):
+                cur += 1
+                best = max(best, cur)
+            else:
+                cur = 0
+        return best
+
+    def get_number_frequency(self) -> dict:
+        """Returns how often each actual number has appeared."""
+        from collections import Counter
+        history = self.data.get("history", [])
+        return dict(Counter(r["actual_number"] for r in history))
+
+    def get_advanced_stats(self) -> dict:
+        """Richer analytics for the dashboard (best/worst/avg/streak/frequency)."""
+        base = self.get_stats()
+        history = self.data.get("history", [])
+        profits = [h.get("profit_change", 0) for h in history]
+        base.update({
+            "best_round": max(profits) if profits else 0,
+            "worst_round": min(profits) if profits else 0,
+            "avg_profit": (sum(profits) / len(profits)) if profits else 0.0,
+            "current_streak": self.get_streak(),
+            "max_streak": self.get_max_win_streak(),
+            "frequency": self.get_number_frequency(),
+        })
+        return base
         
     def reset_data(self):
         """Resets all data to initial state."""

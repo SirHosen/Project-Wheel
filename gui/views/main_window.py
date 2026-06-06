@@ -80,6 +80,17 @@ class MainWindow(ctk.CTk):
         left = ctk.CTkFrame(self.content_frame, fg_color=settings.UI_COLORS["panel"], corner_radius=15)
         left.grid(row=0, column=0, sticky="nsew", padx=16, pady=16)
         
+        # Modal Token Input
+        ctk.CTkLabel(left, text="💰 Modal Token", font=settings.FONTS["subheader"], text_color=settings.UI_COLORS["text"]).pack(pady=(16, 5))
+        modal_f = ctk.CTkFrame(left, fg_color="transparent")
+        modal_f.pack()
+        self.modal_entry = ctk.CTkEntry(modal_f, width=110, font=settings.FONTS["body"], justify="center")
+        self.modal_entry.insert(0, str(self.vm.current_capital))
+        self.modal_entry.pack(side="left", padx=5)
+        ctk.CTkButton(modal_f, text="💾 Set", width=60, command=self._on_set_modal,
+                      fg_color=settings.UI_COLORS["card"], hover_color=settings.UI_COLORS["secondary"],
+                      text_color=settings.UI_COLORS["text"]).pack(side="left")
+        
         # Manual % Input
         ctk.CTkLabel(left, text="📊 % Kemunculan Manual", font=settings.FONTS["subheader"], text_color=settings.UI_COLORS["text"]).pack(pady=(16, 5))
         
@@ -191,10 +202,14 @@ class MainWindow(ctk.CTk):
         
         # Bottom Actions
         actions_f = ctk.CTkFrame(stats_bg, fg_color="transparent")
-        actions_f.grid(row=2, column=0, sticky="e", padx=16, pady=10)
+        actions_f.grid(row=2, column=0, sticky="ew", padx=16, pady=10)
         
-        ctk.CTkButton(actions_f, text="📊 Export CSV", command=self._on_export, fg_color=settings.UI_COLORS["card"], hover_color=settings.UI_COLORS["info"]).pack(side="left", padx=5)
-        ctk.CTkButton(actions_f, text="🔄 Reset Semua", command=self._on_reset, fg_color=settings.UI_COLORS["error"], hover_color="#CC0000").pack(side="left", padx=5)
+        self.adv_lbl = ctk.CTkLabel(actions_f, text="Best: 0  |  Worst: 0  |  Avg/ronde: 0.0  |  Max streak: 0",
+                                    font=settings.FONTS["small"], text_color=settings.UI_COLORS["text_secondary"])
+        self.adv_lbl.pack(side="left", padx=5)
+        
+        ctk.CTkButton(actions_f, text="🔄 Reset Semua", command=self._on_reset, fg_color=settings.UI_COLORS["error"], hover_color="#CC0000").pack(side="right", padx=5)
+        ctk.CTkButton(actions_f, text="📊 Export CSV", command=self._on_export, fg_color=settings.UI_COLORS["card"], hover_color=settings.UI_COLORS["info"]).pack(side="right", padx=5)
 
     def _make_stat_card(self, parent, title, val):
         f = ctk.CTkFrame(parent, fg_color=settings.UI_COLORS["card"], corner_radius=10)
@@ -239,21 +254,36 @@ class MainWindow(ctk.CTk):
     def _on_engine_change(self, choice):
         self.vm.selected_engine = choice
 
+    def _on_set_modal(self):
+        try:
+            val = int(float(self.modal_entry.get()))
+            if val <= 0:
+                raise ValueError
+        except (ValueError, TypeError):
+            messagebox.showerror("Modal", "Masukkan angka modal yang valid (lebih dari 0).")
+            return
+        self.vm.set_initial_capital(val)
+        self._refresh_header()
+        messagebox.showinfo("Modal", f"Modal diset ke {val} token.")
+
     def _on_hitung(self):
         self.hitung_btn.configure(text="⏳ Menghitung...", state="disabled")
         # Ensure percentages are updated
         self._update_perc_total()
         
-        # Simulate delay for animation
-        self.after(500, self._display_predictions)
+        # Run prediction OFF the UI thread so the window never freezes
+        self.vm.get_predictions_async(
+            lambda allocs: self.after(0, self._display_predictions, allocs)
+        )
         
-    def _display_predictions(self):
+    def _display_predictions(self, allocs=None):
         self.hitung_btn.configure(text="🔮 HITUNG PREDIKSI", state="normal")
         
         for w in self.cards_frame.winfo_children():
             w.destroy()
             
-        allocs = self.vm.get_predictions()
+        if allocs is None:
+            allocs = []
         self.current_predictions = allocs
         
         if not allocs:
@@ -345,6 +375,12 @@ class MainWindow(ctk.CTk):
         self.stat_profit.configure(text=f"{sign}{stats['profit']} tok")
         self.stat_streak.configure(text=f"🔥 {self.vm.tracker.get_streak()}x")
         
+        adv = self.vm.get_advanced_stats()
+        self.adv_lbl.configure(
+            text=f"Best: +{adv['best_round']}  |  Worst: {adv['worst_round']}  |  "
+                 f"Avg/ronde: {adv['avg_profit']:.1f}  |  Max streak: {adv['max_streak']}x"
+        )
+        
         if self.vm.latest_ev is not None:
             self.ev_lbl.configure(text=f"Last Actual EV: {self.vm.latest_ev:.2f} | Probabilitas: {self.vm.latest_prob*100:.2f}%")
         
@@ -384,5 +420,7 @@ class MainWindow(ctk.CTk):
             for w in self.cards_frame.winfo_children():
                 w.destroy()
             self.vm.current_capital = 1000
+            self.modal_entry.delete(0, "end")
+            self.modal_entry.insert(0, "1000")
             self._refresh_stats()
             self._refresh_header()

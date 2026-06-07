@@ -58,8 +58,13 @@ def test_observe_updates_scores_and_weights():
             hist.append(1)
         st = e.learning_status()
         assert st["n_observed"] == 40
-        assert e.scores["physics"] > 0.5
-        assert e.weights()["physics"] > w0["physics"]
+        # Physics clearly learned to be reliable here.
+        assert e.scores["physics"] > 0.7
+        w = e.weights()
+        assert abs(sum(w.values()) - 1.0) < 1e-9
+        # After warmup it shares trust with the other now-proven models, but
+        # always keeps a strong, non-degenerate anchor share.
+        assert w["physics"] >= 0.2
         print("after 40 spins -> weights:", st["weights"], "acc:", st["accuracy"])
 
 
@@ -78,10 +83,30 @@ def test_state_persists_across_instances():
         print("state persisted: n_observed =", e2.n_observed)
 
 
+class _FakeLstm:
+    """Undertrained LSTM that collapsed onto the rarest number (40)."""
+    _trained = True
+
+    def predict_next(self, history):
+        return [{"number": 40, "confidence": 0.95}, {"number": 1, "confidence": 0.05}]
+
+
+def test_coldstart_ignores_overconfident_lstm():
+    # Regression test for the "hasil 40 terus" bug: a fresh brain must not let
+    # an over-confident, undertrained LSTM hijack the prediction to a rare number.
+    e = ContinuousLearningEngine(markov_engine=MarkovEngine(), lstm_engine=_FakeLstm())
+    preds = e.predict_next([1, 2, 1, 5, 1, 2])
+    top = preds[0]["number"]
+    assert top != 40, f"cold-start ensemble hijacked by undertrained LSTM -> {top}"
+    assert top == 1, f"expected most-common number 1, got {top}"
+    print("cold-start safe; top pick:", top, "(lstm gated, not 40)")
+
+
 if __name__ == "__main__":
     test_physics_prior_matches_area()
     test_bayes_converges_to_empirical()
     test_ensemble_is_valid_distribution()
     test_observe_updates_scores_and_weights()
     test_state_persists_across_instances()
+    test_coldstart_ignores_overconfident_lstm()
     print("\nALL CONTINUOUS-ENGINE TESTS PASSED")

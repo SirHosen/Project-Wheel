@@ -1,0 +1,188 @@
+{
+  "meta": {
+    "generated_at": "2026-06-08T03:23:17",
+    "app_version": "1.6.1",
+    "total_rounds": 59,
+    "first_timestamp": "2026-06-08T02:36:58.756412",
+    "last_timestamp": "2026-06-08T03:23:03.404186"
+  },
+  "bankroll": {
+    "starting_capital": 10,
+    "current_capital": 10,
+    "realized_profit": 0,
+    "roi_pct": 0.0,
+    "max_drawdown": 8,
+    "max_drawdown_pct": 53.333333333333336,
+    "equity_curve": [
+      10,
+      10,
+      10,
+      10,
+      10,
+      10,
+      10,
+      10,
+      10,
+      10,
+      10,
+      10,
+      10,
+      10,
+      10,
+      10,
+      10,
+      10,
+      10,
+      10,
+      10,
+      15,
+      14,
+      13,
+      13,
+      12,
+      12,
+      12,
+      12,
+      12,
+      12,
+      12,
+      11,
+      11,
+      11,
+      10,
+      10,
+      10,
+      9,
+      9,
+      9,
+      9,
+      8,
+      7,
+      12,
+      12,
+      12,
+      12,
+      12,
+      12,
+      12,
+      12,
+      12,
+      12,
+      12,
+      12,
+      12,
+      11,
+      10
+    ]
+  },
+  "performance": {
+    "top_pick_win_rate_pct": 67.79661016949152,
+    "top_pick_hits": 40,
+    "bet_rounds": 12,
+    "skip_rounds": 47,
+    "bet_win_rate_pct": 16.666666666666664,
+    "realized_profit_per_bet": 0.0
+  },
+  "round_stats": {
+    "best": 5,
+    "worst": -1,
+    "avg": 0.0,
+    "std": 1.0170952554312156
+  },
+  "streaks": {
+    "current_win": 0,
+    "max_win": 7,
+    "max_loss": 3
+  },
+  "per_number": [
+    {
+      "number": 1,
+      "observed": 26,
+      "observed_pct": 44.06779661016949,
+      "theoretical_pct": 37.03703703703704,
+      "deviation_pct": 7.03075957313245
+    },
+    {
+      "number": 2,
+      "observed": 15,
+      "observed_pct": 25.423728813559322,
+      "theoretical_pct": 24.074074074074073,
+      "deviation_pct": 1.3496547394852492
+    },
+    {
+      "number": 5,
+      "observed": 8,
+      "observed_pct": 13.559322033898304,
+      "theoretical_pct": 12.962962962962962,
+      "deviation_pct": 0.5963590709353426
+    },
+    {
+      "number": 8,
+      "observed": 1,
+      "observed_pct": 1.694915254237288,
+      "theoretical_pct": 7.4074074074074066,
+      "deviation_pct": -5.7124921531701185
+    },
+    {
+      "number": 10,
+      "observed": 5,
+      "observed_pct": 8.47457627118644,
+      "theoretical_pct": 7.4074074074074066,
+      "deviation_pct": 1.0671688637790329
+    },
+    {
+      "number": 15,
+      "observed": 2,
+      "observed_pct": 3.389830508474576,
+      "theoretical_pct": 3.7037037037037033,
+      "deviation_pct": -0.31387319522912716
+    },
+    {
+      "number": 20,
+      "observed": 0,
+      "observed_pct": 0.0,
+      "theoretical_pct": 3.7037037037037033,
+      "deviation_pct": -3.7037037037037033
+    },
+    {
+      "number": 30,
+      "observed": 1,
+      "observed_pct": 1.694915254237288,
+      "theoretical_pct": 1.8518518518518516,
+      "deviation_pct": -0.15693659761456358
+    },
+    {
+      "number": 40,
+      "observed": 1,
+      "observed_pct": 1.694915254237288,
+      "theoretical_pct": 1.8518518518518516,
+      "deviation_pct": -0.15693659761456358
+    }
+  ],
+  "fairness": {
+    "chi_square": 5.754740175079158,
+    "df": 8,
+    "critical_value_0_05": 15.507,
+    "verdict": "fair",
+    "sample_size": 59
+  },
+  "autocorrelation": {
+    "lag1_repeat_pct": 31.03448275862069,
+    "expected_repeat_pct": 28.64119505889112,
+    "verdict": "random"
+  },
+  "markov_edge": {
+    "rounds": 52,
+    "markov_top1_rate": 0.38461538461538464,
+    "baseline_top1_rate": 0.4230769230769231,
+    "baseline_number": 1,
+    "z": -0.39969266226733896,
+    "verdict": "no_edge",
+    "note": "Belum ada edge: model tidak mengalahkan tebakan paling sering."
+  },
+  "data_quality": {
+    "flags": [
+      "predicted_number hanya tersimpan saat MENANG; angka yang dipertaruhkan, confidence, support, dan EV per ronde belum dilog -> audit akurasi taruhan per-angka belum bisa penuh. Rekomendasi: simpan snapshot prediksi tiap ronde."
+    ]
+  }
+}

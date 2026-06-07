@@ -121,11 +121,21 @@ class ContinuousLearningEngine:
     # Adaptive weights (learned continuously)
     # ------------------------------------------------------------------ #
     def weights(self) -> dict:
-        """Softmax of each model's EMA accuracy. Models with no signal yet get
-        an equal share; physics always participates as the ground-truth floor."""
-        active = [m for m in self.MODELS]
-        exps = {m: math.exp(self.scores[m] / max(1e-6, self.temperature)) for m in active}
-        return _normalize(exps)
+        """Blend weights = softmax of each model's EMA accuracy, BUT the
+        trainable models (markov, lstm) must EARN trust through a maturity gate
+        proportional to how many spins we have actually learned from.
+
+        Physics and bayes are statistically valid from spin #1 (closed-form and
+        seeded by the real wheel layout), so they anchor the ensemble. This
+        guarantees a cold-start prediction always reflects the real wheel and can
+        NEVER be hijacked by an undertrained model that is over-confident about a
+        rare number (e.g. an LSTM that collapsed onto 40 after a few epochs)."""
+        base = {m: math.exp(self.scores[m] / max(1e-6, self.temperature)) for m in self.MODELS}
+        warmup = float(max(1, getattr(settings, "ENSEMBLE_WARMUP_SPINS", 30)))
+        warm = min(1.0, self.n_observed / warmup)
+        gate = {"physics": 1.0, "bayes": 1.0, "markov": warm, "lstm": warm}
+        gated = {m: base[m] * gate[m] for m in self.MODELS}
+        return _normalize(gated)
 
     def ensemble_probabilities(self, history: list) -> dict:
         dists = self._all_distributions(history)

@@ -5,7 +5,7 @@ config/settings.py — Application configuration, constants, and UI themes.
 
 # Bumped whenever the prediction/betting/reporting logic changes. Stamped onto
 # every exported audit report so upgrades and audits are traceable.
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.6.1"
 
 # ---------------------------------------------------------
 # Wheel Configuration
@@ -92,3 +92,4 @@ WHEEL_SPIN_OMEGA_STD = 3.0   # human spin-to-spin variability (rad/s)
 LEARNING_STATE_PATH = "models/continuous_state.json"
 ENSEMBLE_EMA_LR = 0.08       # how fast model trust adapts per spin
 ENSEMBLE_TEMPERATURE = 0.15  # softmax sharpness for blend weights
+ENSEMBLE_WARMUP_SPINS = 30   # spins before markov/lstm earn full trust weight

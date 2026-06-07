@@ -1,5 +1,11 @@
 # Changelog — Enhancement Pass oleh Notion AI
 
+## v1.6.1 — Perbaikan bug "hasil 40 terus" (oleh Mahapatih)
+- **Bug**: di awal pemakaian, keempat model dapat bobot kepercayaan sama rata (25%). LSTM yang baru dilatih dari data sedikit "kolaps" menembak satu angka langka (40) dengan pede tinggi, lalu membajak prediksi ensemble selama belasan spin pertama (sebelum EMA sempat mengoreksi).
+- **Fix (maturity gate)**: model yang butuh latihan (Markov & LSTM) kini harus MEMBUKTIKAN akurasinya dulu sebelum dapat bobot penuh — bobotnya naik bertahap selama `ENSEMBLE_WARMUP_SPINS` (30) putaran. Fisika & Bayes (valid secara statistik sejak spin #1) jadi jangkar, jadi prediksi awal SELALU mencerminkan roda asli dan tidak bisa dibajak ke angka langka.
+- **Verifikasi**: prediksi cold-start pada 117 spin nyata (1.csv) kini = [1, 2, 5] (angka tersering), bukan 40. Regression test `test_coldstart_ignores_overconfident_lstm` ditambahkan & lulus.
+- **Catatan**: "saran bet 1 token" itu BENAR & jujur — di roda adil semua taruhan ber-EV negatif (mis. taruh "1" bayar 1:1 -> EV = 0.37x2-1 = -0.26), jadi sistem memang menyarankan taruhan minimum. Itu fitur kejujuran, bukan bug.
+
 ## v1.6.0 — Pembelajaran berkesinambungan + UI live-learning (oleh Mahapatih)
 - **Otak Ensemble kontinu (`core/continuous_engine.py`)**: satu mesin yang menyatukan 4 sinyal — Fisika (area-fraction = kebenaran roda adil), Bayes (posterior Dirichlet dari hasil live, di-seed prior fisika), Markov (transisi), dan TF-LSTM (GPU). Menghasilkan SATU distribusi probabilitas terpadu.
 - **Belajar bobot tiap putaran**: setiap `observe(actual)` menilai top-pick tiap model, memperbarui akurasi walk-forward (EMA), lalu menata ulang bobot blend via softmax. Sistem benar-benar "belajar harus percaya sinyal mana" secara kontinu.

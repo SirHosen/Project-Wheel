@@ -3,6 +3,10 @@
 config/settings.py — Application configuration, constants, and UI themes.
 """
 
+# Bumped whenever the prediction/betting/reporting logic changes. Stamped onto
+# every exported audit report so upgrades and audits are traceable.
+APP_VERSION = "1.4.0"
+
 # ---------------------------------------------------------
 # Wheel Configuration
 # ---------------------------------------------------------
@@ -57,3 +61,15 @@ DEFAULT_RISK_PCT = 0.30
 LSTM_SEQUENCE_LENGTH = 5
 TF_EPOCHS_INCREMENTAL = 1
 TF_EPOCHS_BULK = 10
+
+# ---- Deep TF-LSTM model (tuned to exploit a real GPU, e.g. RTX 3080) ----
+LSTM_EMBEDDING_DIM = 16            # size of the learned per-number embedding
+LSTM_UNITS = [128, 64]             # stacked LSTM layer sizes (deeper on GPU)
+LSTM_DENSE_UNITS = 64              # hidden dense layer before the softmax
+LSTM_DROPOUT = 0.2                 # regularization
+LSTM_BATCH_SIZE = 64               # GPU-friendly batch size
+LSTM_BULK_EPOCHS = 60              # heavy one-time training (fast on a 3080)
+LSTM_VALIDATION_SPLIT = 0.15       # held-out split for honest validation
+LSTM_EARLY_STOP_PATIENCE = 8       # stop when val accuracy plateaus
+LSTM_USE_MIXED_PRECISION = True    # float16 Tensor Cores (Ampere/RTX 3080)
+LSTM_MODEL_PATH = "models/lstm_spinwheel.keras"  # saved/reused trained model

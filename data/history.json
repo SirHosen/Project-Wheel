@@ -1,153 +1,188 @@
 {
-    "current_capital": 1000,
-    "total_predictions": 21,
-    "wins": 0,
-    "losses": 21,
+    "current_capital": 20,
+    "total_predictions": 26,
+    "wins": 17,
+    "losses": 9,
     "profit": 0,
     "history": [
         {
-            "timestamp": "2026-06-06T04:46:02.412044",
-            "actual_number": 8,
-            "predicted_number": null,
-            "profit_change": 0,
-            "is_win": false
-        },
-        {
-            "timestamp": "2026-06-06T04:46:05.452047",
-            "actual_number": 1,
-            "predicted_number": null,
-            "profit_change": 0,
-            "is_win": false
-        },
-        {
-            "timestamp": "2026-06-06T04:46:15.362510",
-            "actual_number": 1,
-            "predicted_number": null,
-            "profit_change": 0,
-            "is_win": false
-        },
-        {
-            "timestamp": "2026-06-06T04:46:16.086611",
-            "actual_number": 1,
-            "predicted_number": null,
-            "profit_change": 0,
-            "is_win": false
-        },
-        {
-            "timestamp": "2026-06-06T04:46:16.393053",
-            "actual_number": 1,
-            "predicted_number": null,
-            "profit_change": 0,
-            "is_win": false
-        },
-        {
-            "timestamp": "2026-06-06T04:46:16.875637",
-            "actual_number": 1,
-            "predicted_number": null,
-            "profit_change": 0,
-            "is_win": false
-        },
-        {
-            "timestamp": "2026-06-06T04:46:17.084112",
-            "actual_number": 1,
-            "predicted_number": null,
-            "profit_change": 0,
-            "is_win": false
-        },
-        {
-            "timestamp": "2026-06-06T04:46:17.240552",
-            "actual_number": 1,
-            "predicted_number": null,
-            "profit_change": 0,
-            "is_win": false
-        },
-        {
-            "timestamp": "2026-06-06T04:46:17.398535",
-            "actual_number": 1,
-            "predicted_number": null,
-            "profit_change": 0,
-            "is_win": false
-        },
-        {
-            "timestamp": "2026-06-06T04:46:17.553941",
-            "actual_number": 1,
-            "predicted_number": null,
-            "profit_change": 0,
-            "is_win": false
-        },
-        {
-            "timestamp": "2026-06-06T04:46:17.697579",
-            "actual_number": 1,
-            "predicted_number": null,
-            "profit_change": 0,
-            "is_win": false
-        },
-        {
-            "timestamp": "2026-06-06T04:46:17.840761",
-            "actual_number": 1,
-            "predicted_number": null,
-            "profit_change": 0,
-            "is_win": false
-        },
-        {
-            "timestamp": "2026-06-06T04:46:17.990723",
-            "actual_number": 1,
-            "predicted_number": null,
-            "profit_change": 0,
-            "is_win": false
-        },
-        {
-            "timestamp": "2026-06-06T04:46:18.148771",
-            "actual_number": 1,
-            "predicted_number": null,
-            "profit_change": 0,
-            "is_win": false
-        },
-        {
-            "timestamp": "2026-06-06T04:46:18.303830",
-            "actual_number": 1,
-            "predicted_number": null,
-            "profit_change": 0,
-            "is_win": false
-        },
-        {
-            "timestamp": "2026-06-06T04:46:18.454443",
-            "actual_number": 1,
-            "predicted_number": null,
-            "profit_change": 0,
-            "is_win": false
-        },
-        {
-            "timestamp": "2026-06-06T04:46:18.611088",
-            "actual_number": 1,
-            "predicted_number": null,
-            "profit_change": 0,
-            "is_win": false
-        },
-        {
-            "timestamp": "2026-06-06T04:46:18.754116",
-            "actual_number": 1,
-            "predicted_number": null,
-            "profit_change": 0,
-            "is_win": false
-        },
-        {
-            "timestamp": "2026-06-06T04:46:20.248663",
-            "actual_number": 8,
-            "predicted_number": null,
-            "profit_change": 0,
-            "is_win": false
-        },
-        {
-            "timestamp": "2026-06-06T04:46:21.812913",
-            "actual_number": 1,
-            "predicted_number": null,
-            "profit_change": 0,
-            "is_win": false
-        },
-        {
-            "timestamp": "2026-06-06T04:46:24.468822",
+            "timestamp": "2026-06-07T12:11:15.855421",
             "actual_number": 2,
+            "predicted_number": 2,
+            "profit_change": 0,
+            "is_win": true
+        },
+        {
+            "timestamp": "2026-06-07T12:11:40.786278",
+            "actual_number": 2,
+            "predicted_number": 2,
+            "profit_change": 0,
+            "is_win": true
+        },
+        {
+            "timestamp": "2026-06-07T12:12:27.579612",
+            "actual_number": 2,
+            "predicted_number": 2,
+            "profit_change": 0,
+            "is_win": true
+        },
+        {
+            "timestamp": "2026-06-07T12:13:18.941081",
+            "actual_number": 1,
+            "predicted_number": 1,
+            "profit_change": 0,
+            "is_win": true
+        },
+        {
+            "timestamp": "2026-06-07T12:14:06.516875",
+            "actual_number": 10,
+            "predicted_number": null,
+            "profit_change": 0,
+            "is_win": false
+        },
+        {
+            "timestamp": "2026-06-07T12:14:52.801774",
+            "actual_number": 1,
+            "predicted_number": 1,
+            "profit_change": 0,
+            "is_win": true
+        },
+        {
+            "timestamp": "2026-06-07T12:15:43.738739",
+            "actual_number": 15,
+            "predicted_number": null,
+            "profit_change": 0,
+            "is_win": false
+        },
+        {
+            "timestamp": "2026-06-07T12:16:35.341607",
+            "actual_number": 1,
+            "predicted_number": 1,
+            "profit_change": 0,
+            "is_win": true
+        },
+        {
+            "timestamp": "2026-06-07T12:17:28.213421",
+            "actual_number": 40,
+            "predicted_number": null,
+            "profit_change": 0,
+            "is_win": false
+        },
+        {
+            "timestamp": "2026-06-07T12:18:11.202691",
+            "actual_number": 5,
+            "predicted_number": 5,
+            "profit_change": 0,
+            "is_win": true
+        },
+        {
+            "timestamp": "2026-06-07T12:18:58.881551",
+            "actual_number": 1,
+            "predicted_number": 1,
+            "profit_change": 0,
+            "is_win": true
+        },
+        {
+            "timestamp": "2026-06-07T12:19:46.561259",
+            "actual_number": 2,
+            "predicted_number": 2,
+            "profit_change": 0,
+            "is_win": true
+        },
+        {
+            "timestamp": "2026-06-07T12:20:33.001421",
+            "actual_number": 2,
+            "predicted_number": 2,
+            "profit_change": 0,
+            "is_win": true
+        },
+        {
+            "timestamp": "2026-06-07T12:21:33.582284",
+            "actual_number": 15,
+            "predicted_number": null,
+            "profit_change": 0,
+            "is_win": false
+        },
+        {
+            "timestamp": "2026-06-07T12:22:15.255063",
+            "actual_number": 15,
+            "predicted_number": null,
+            "profit_change": 0,
+            "is_win": false
+        },
+        {
+            "timestamp": "2026-06-07T12:23:01.511731",
+            "actual_number": 1,
+            "predicted_number": 1,
+            "profit_change": 0,
+            "is_win": true
+        },
+        {
+            "timestamp": "2026-06-07T12:23:45.794597",
+            "actual_number": 5,
+            "predicted_number": null,
+            "profit_change": 0,
+            "is_win": false
+        },
+        {
+            "timestamp": "2026-06-07T12:24:40.515665",
+            "actual_number": 8,
+            "predicted_number": null,
+            "profit_change": 0,
+            "is_win": false
+        },
+        {
+            "timestamp": "2026-06-07T12:25:27.229028",
+            "actual_number": 1,
+            "predicted_number": 1,
+            "profit_change": 0,
+            "is_win": true
+        },
+        {
+            "timestamp": "2026-06-07T12:26:21.102555",
+            "actual_number": 8,
+            "predicted_number": null,
+            "profit_change": 0,
+            "is_win": false
+        },
+        {
+            "timestamp": "2026-06-07T12:27:10.627003",
+            "actual_number": 1,
+            "predicted_number": 1,
+            "profit_change": 0,
+            "is_win": true
+        },
+        {
+            "timestamp": "2026-06-07T12:28:01.753231",
+            "actual_number": 2,
+            "predicted_number": 2,
+            "profit_change": 0,
+            "is_win": true
+        },
+        {
+            "timestamp": "2026-06-07T12:28:43.149190",
+            "actual_number": 1,
+            "predicted_number": 1,
+            "profit_change": 0,
+            "is_win": true
+        },
+        {
+            "timestamp": "2026-06-07T12:29:30.988885",
+            "actual_number": 5,
+            "predicted_number": 5,
+            "profit_change": 0,
+            "is_win": true
+        },
+        {
+            "timestamp": "2026-06-07T12:30:20.481700",
+            "actual_number": 1,
+            "predicted_number": 1,
+            "profit_change": 0,
+            "is_win": true
+        },
+        {
+            "timestamp": "2026-06-07T12:31:12.524209",
+            "actual_number": 20,
             "predicted_number": null,
             "profit_change": 0,
             "is_win": false

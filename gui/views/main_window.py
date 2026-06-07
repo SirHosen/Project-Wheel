@@ -95,7 +95,7 @@ class MainWindow(ctk.CTk):
         self.engine_var = ctk.StringVar(value=self.vm.selected_engine)
         self.engine_dropdown = ctk.CTkOptionMenu(
             header,
-            values=["Markov", "TF-LSTM", "Heuristic"],
+            values=["Ensemble", "Markov", "TF-LSTM", "Heuristic"],
             variable=self.engine_var,
             command=self._on_engine_change,
             width=140,
@@ -263,6 +263,36 @@ class MainWindow(ctk.CTk):
             text_color=C["text_secondary"], anchor="w",
         )
         self.ev_lbl.pack(fill="x", pady=(10, 4))
+
+        # --- Live learning panel (continuous Ensemble brain) ---
+        # Visualises how much the system currently trusts each signal. The bars
+        # and accuracies update live after every confirmed spin.
+        self._section_label(body, "Pembelajaran Live (Ensemble)").pack(fill="x", pady=(18, 4))
+        self.learn_info_lbl = ctk.CTkLabel(
+            body, text="Belajar dari 0 putaran  -  LSTM-GPU: -",
+            font=font(11), text_color=C["text_secondary"], anchor="w",
+        )
+        self.learn_info_lbl.pack(fill="x", pady=(0, 6))
+        self.learn_widgets = {}
+        _model_labels = {"physics": "Fisika", "bayes": "Bayes", "markov": "Markov", "lstm": "LSTM-GPU"}
+        for key in ("physics", "bayes", "markov", "lstm"):
+            lr = ctk.CTkFrame(body, fg_color="transparent")
+            lr.pack(fill="x", pady=2)
+            lr.grid_columnconfigure(1, weight=1)
+            ctk.CTkLabel(
+                lr, text=_model_labels[key], font=font(11, "bold"),
+                text_color=C["text"], width=78, anchor="w",
+            ).grid(row=0, column=0, sticky="w")
+            bar = ctk.CTkProgressBar(
+                lr, progress_color=C["info"], fg_color=C["card"], height=8, corner_radius=4,
+            )
+            bar.set(0.25)
+            bar.grid(row=0, column=1, sticky="ew", padx=8)
+            acc = ctk.CTkLabel(
+                lr, text="acc -", font=font(10), text_color=C["text_secondary"], width=58,
+            )
+            acc.grid(row=0, column=2, sticky="e")
+            self.learn_widgets[key] = (bar, acc)
 
     def _build_prediction_zone(self):
         self.right = ctk.CTkFrame(self.content_frame, fg_color="transparent")
@@ -643,6 +673,25 @@ class MainWindow(ctk.CTk):
     # ------------------------------------------------------------------ #
     # Refresh
     # ------------------------------------------------------------------ #
+    def _refresh_learning(self):
+        """Repaint the live-learning panel from the continuous ensemble state."""
+        if not hasattr(self, "learn_widgets"):
+            return
+        try:
+            st = self.vm.get_learning_status()
+        except Exception:
+            return
+        gpu = "aktif" if st.get("lstm_ready") else "memanas..."
+        self.learn_info_lbl.configure(
+            text=f"Belajar dari {st.get('n_observed', 0)} putaran  -  LSTM-GPU: {gpu}"
+        )
+        weights = st.get("weights", {})
+        accs = st.get("accuracy", {})
+        for key, (bar, acc) in self.learn_widgets.items():
+            bar.set(max(0.0, min(1.0, float(weights.get(key, 0.0)))))
+            a = accs.get(key)
+            acc.configure(text=(f"acc {a*100:.0f}%" if a is not None else "acc -"))
+
     def _refresh_header(self):
         self.capital_lbl.configure(text=f"Modal: {self.vm.current_capital} token")
 
@@ -691,6 +740,8 @@ class MainWindow(ctk.CTk):
             )
         except Exception:
             pass
+
+        self._refresh_learning()
 
         # Cumulative profit chart.
         history = self.vm.tracker.data.get("history", [])

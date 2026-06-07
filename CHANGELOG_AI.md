@@ -1,5 +1,14 @@
 # Changelog — Enhancement Pass oleh Notion AI
 
+## v1.6.0 — Pembelajaran berkesinambungan + UI live-learning (oleh Mahapatih)
+- **Otak Ensemble kontinu (`core/continuous_engine.py`)**: satu mesin yang menyatukan 4 sinyal — Fisika (area-fraction = kebenaran roda adil), Bayes (posterior Dirichlet dari hasil live, di-seed prior fisika), Markov (transisi), dan TF-LSTM (GPU). Menghasilkan SATU distribusi probabilitas terpadu.
+- **Belajar bobot tiap putaran**: setiap `observe(actual)` menilai top-pick tiap model, memperbarui akurasi walk-forward (EMA), lalu menata ulang bobot blend via softmax. Sistem benar-benar "belajar harus percaya sinyal mana" secara kontinu.
+- **Kontinu antar-sesi**: state belajar (skor + jumlah putaran) dipersist ke `models/continuous_state.json`, jadi tidak mulai dari nol tiap buka app. GPU LSTM dilatih inkremental tiap putaran & disimpan periodik (GPU tetap hangat).
+- **Engine default = "Ensemble"** di dropdown UI; viewmodel memanggil `continuous.observe()` di `process_new_actual`.
+- **UI**: panel "Pembelajaran Live (Ensemble)" — bar bobot + akurasi tiap model (Fisika/Bayes/Markov/LSTM-GPU) + jumlah putaran dipelajari + status GPU, refresh tiap konfirmasi hasil.
+- **Uji**: `_test_continuous.py` (prior fisika, konvergensi Bayes, distribusi ensemble valid, update bobot, persistensi) — semua LULUS.
+- **Catatan jujur**: pada roda adil, semua model konvergen ke baseline frekuensi yang sama, jadi bobot tetap seimbang & ensemble ≈ area-fraction. Mesinnya nyata; ia tidak bisa menciptakan edge yang tidak dimiliki roda.
+
 ## Diagnosis awal
 - Tidak ada syntax error; seluruh modul lolos kompilasi.
 - Logika inti (wheel_math, heuristic_engine, token allocation, reward) sudah BENAR & sudah dites.
@@ -213,3 +222,28 @@ pada DATA kamu. Kalau tidak (kemungkinan besar pada roda fair), itu bukti, bukan
 ### Catatan teknis
 Kode TF tidak bisa dijalankan/diuji di lingkungan build (TensorFlow tidak terpasang di sana);
 sudah lolos py_compile (cek sintaks). Jalankan di PC ber-GPU kamu untuk eksekusi penuh.
+
+## v1.5.0 — Physics engine + GPU Monte-Carlo (audit ulang full-GPU)
+
+**Audit ulang (data asli `1.csv`, 117 putaran):** chi-square 12.97 < 15.51 (df=8) -> roda FAIR; repeat lag-1 23.3% vs 22.6% acak -> tidak ada autokorelasi; distribusi cocok dengan luas segmen. Kesimpulan audit tidak berubah: roda acak & adil.
+
+**Baru — `core/physics_wheel.py`:** model dinamika rotasi benda tegar untuk roda fisik.
+- Disk seragam: I = 1/2 m R^2. Default radius 0.80 m (~1.6 m diameter, "seukuran orang dewasa"), massa 25 kg -> inersia 8.0 kg*m^2, torsi gesek 4.8 N*m.
+- Kinematika deselerasi konstan: omega(t)=omega0-alpha t; Theta=omega0^2/(2 alpha); segmen = floor(theta_f / seg_angle).
+- `spin()`, `spin_vec()` (numpy tervektor), `monte_carlo()`, `area_fractions()`, `sensitivity()`, `predictability_report()`.
+
+**Baru — `physics_lab.py`:** laboratorium GPU (jalankan: `python physics_lab.py --ml`).
+1. Monte-Carlo jutaan spin di GPU (TensorFlow) -> distribusi hasil vs luas teoretis.
+2. Batas keterprediksian: presisi pengukuran omega0 yang dibutuhkan vs yang bisa didapat dari video.
+3. Demo ML: jaringan saraf belajar fisika torsi->hasil; akurasi runtuh ke baseline begitu ada noise pengukuran realistis.
+
+**Settings:** APP_VERSION 1.4.0 -> 1.5.0; tambah WHEEL_RADIUS_M, WHEEL_MASS_KG, WHEEL_DECEL_RAD_S2, WHEEL_SPIN_OMEGA_MEAN, WHEEL_SPIN_OMEGA_STD.
+
+**Test:** `_test_physics.py` (5 test, semua lulus): inersia/torsi, determinisme & kinematika, vektor==skalar, Monte-Carlo mereproduksi luas segmen (error 0.0004), batas keterprediksian (butuh 0.048% presisi; video ~29% -> ~600 segmen ketidakpastian).
+
+**Catatan jujur (penting):** Modul fisika ini MEMODELKAN dan MEMBUKTIKAN perilaku roda; ia TIDAK bisa memprediksi spin nyata dari hasil masa lalu. Hasil = fungsi deterministik dari kondisi awal (sudut & kecepatan lepas) yang di-set ulang acak tiap spin. Tidak ada hubungan kausal dari urutan angka ke gaya putar, jadi "belajar torsi dari urutan angka" secara fisika tidak valid. GPU di sini dipakai penuh untuk simulasi & pembuktian, bukan untuk meramal yang tak teramalkan.
+
+*Catatan teknis: TF tidak dapat dijalankan di lingkungan build (hanya py_compile + numpy test). physics_lab.py diuji py_compile; dijalankan di mesin GPU Anda.*
+
+### v1.5.0 — koreksi kejujuran (demo ML)
+Output nyata di RTX 3050: model mentok di baseline (~37%) BAHKAN dengan input float presisi, bukan "akurasi tinggi lalu runtuh". Sebabnya hasil = fungsi frekuensi-tinggi dari omega0 (~172 segmen per rad/s) yang mustahil dipelajari jaringan saraf kontinu = tanda tangan chaos. Teks kesimpulan physics_lab.py dibuat dinamis & akurat sesuai temuan ini.

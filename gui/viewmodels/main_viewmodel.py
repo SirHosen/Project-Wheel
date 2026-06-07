@@ -9,6 +9,7 @@ from predictors.heuristic_engine import HeuristicEngine
 from predictors.markov_engine import MarkovEngine
 from core.wheel_math import WheelMath
 from core.betting import kelly_allocation
+from core.continuous_engine import ContinuousLearningEngine
 
 class MainViewModel:
     """
@@ -22,14 +23,20 @@ class MainViewModel:
         self.heuristic_engine = HeuristicEngine()
         self.markov_engine = MarkovEngine()
         self.wheel_math = WheelMath(settings.SPINWHEEL_SEQUENCE, settings.VALID_NUMBERS)
+        # Unified continuous-learning brain: fuses physics + bayes + markov +
+        # the GPU LSTM and learns each one's trust weight from every spin.
+        self.continuous = ContinuousLearningEngine(
+            lstm_engine=self.lstm_engine, markov_engine=self.markov_engine,
+        )
         
         self._lock = threading.Lock()
         
         # State
         self.current_capital = self.tracker.data.get("current_capital", 1000)
-        # Default engine: Markov is the most robust for win-rate (frequency
-        # prior when data is sparse, transition learning as data grows).
-        self.selected_engine = "Markov"
+        # Default engine: the continuous Ensemble brain, which fuses physics +
+        # Bayesian frequency + Markov + the GPU LSTM and adapts their weights
+        # from every confirmed spin.
+        self.selected_engine = "Ensemble"
         
         self.latest_ev = None
         self.latest_prob = None
@@ -80,6 +87,8 @@ class MainViewModel:
         
         def _task():
             try:
+                # Snapshot results BEFORE this spin so each model is graded fairly.
+                history_before = self.tracker.get_recent_actuals(1000)
                 # 1. Update Tracker
                 with self._lock:
                     self.tracker.record_result(actual, predicted, profit_change)
@@ -91,10 +100,22 @@ class MainViewModel:
                     if self.manual_locked:
                         self.refresh_live_percentages()
                 
-                # 2. Incremental Train TF (if we have enough history)
+                # 2. Continuous learning: grade every signal on this spin and
+                # adapt the ensemble weights (physics / bayes / markov / lstm).
+                try:
+                    self.continuous.observe(actual, history_before)
+                except Exception:
+                    import logging; logging.exception("continuous.observe failed")
+
+                # 3. Incremental Train TF (GPU stays warm) + periodic persist.
                 history = self.tracker.get_recent_actuals(100)
                 if len(history) > settings.LSTM_SEQUENCE_LENGTH:
                     self.lstm_engine.train(history, epochs=settings.TF_EPOCHS_INCREMENTAL)
+                    if self.continuous.n_observed % 10 == 0:
+                        try:
+                            self.lstm_engine.save()
+                        except Exception:
+                            pass
                     
             finally:
                 self.is_processing = False
@@ -112,7 +133,9 @@ class MainViewModel:
         """
         history = self.tracker.get_recent_actuals(self.history_length)
 
-        if self.selected_engine == "TF-LSTM":
+        if self.selected_engine == "Ensemble":
+            engine = self.continuous
+        elif self.selected_engine == "TF-LSTM":
             engine = self.lstm_engine
         elif self.selected_engine == "Markov":
             engine = self.markov_engine
@@ -292,3 +315,10 @@ class MainViewModel:
             "loss": self.lstm_engine.history_metrics['loss'][-1],
             "accuracy": self.lstm_engine.history_metrics['accuracy'][-1]
         }
+
+    def get_learning_status(self) -> dict:
+        """Live status of the continuous-learning ensemble (for the UI panel)."""
+        try:
+            return self.continuous.learning_status()
+        except Exception:
+            return {"n_observed": 0, "weights": {}, "accuracy": {}, "lstm_ready": False}

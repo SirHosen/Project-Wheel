@@ -5,7 +5,7 @@ config/settings.py — Application configuration, constants, and UI themes.
 
 # Bumped whenever the prediction/betting/reporting logic changes. Stamped onto
 # every exported audit report so upgrades and audits are traceable.
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.6.0"
 
 # ---------------------------------------------------------
 # Wheel Configuration
@@ -73,3 +73,22 @@ LSTM_VALIDATION_SPLIT = 0.15       # held-out split for honest validation
 LSTM_EARLY_STOP_PATIENCE = 8       # stop when val accuracy plateaus
 LSTM_USE_MIXED_PRECISION = True    # float16 Tensor Cores (Ampere/RTX 3080)
 LSTM_MODEL_PATH = "models/lstm_spinwheel.keras"  # saved/reused trained model
+
+# ---------------------------------------------------------
+# Physics model (core/physics_wheel.py, physics_lab.py)
+# Rigid-body rotational dynamics of the physical wheel. Used to SIMULATE and
+# EXPLAIN the wheel (GPU Monte-Carlo), not to predict live spins from history.
+# ---------------------------------------------------------
+WHEEL_RADIUS_M = 0.80        # ~1.6 m diameter ("adult-woman-sized", per video)
+WHEEL_MASS_KG = 25.0         # estimated mass of the wheel disk
+WHEEL_DECEL_RAD_S2 = 0.60    # constant angular deceleration from friction
+WHEEL_SPIN_OMEGA_MEAN = 12.0 # typical release angular velocity (rad/s)
+WHEEL_SPIN_OMEGA_STD = 3.0   # human spin-to-spin variability (rad/s)
+
+# ---------------------------------------------------------
+# Continuous-learning ensemble (core/continuous_engine.py)
+# Persisted learning state so the brain keeps improving across launches.
+# ---------------------------------------------------------
+LEARNING_STATE_PATH = "models/continuous_state.json"
+ENSEMBLE_EMA_LR = 0.08       # how fast model trust adapts per spin
+ENSEMBLE_TEMPERATURE = 0.15  # softmax sharpness for blend weights

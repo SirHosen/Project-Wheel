@@ -7,6 +7,7 @@ from data.tracker import Tracker
 from predictors.tf_lstm_engine import TfLstmEngine
 from predictors.heuristic_engine import HeuristicEngine
 from predictors.markov_engine import MarkovEngine
+from predictors.bayesian_optimal import BayesianOptimalEngine
 from core.wheel_math import WheelMath
 from core.betting import kelly_allocation
 from core.continuous_engine import ContinuousLearningEngine
@@ -22,6 +23,10 @@ class MainViewModel:
         self.lstm_engine = TfLstmEngine()
         self.heuristic_engine = HeuristicEngine()
         self.markov_engine = MarkovEngine()
+        # Provably-optimal Dirichlet-Multinomial predictor + statistically-gated
+        # EV engine. Best single predictor for an i.i.d. wheel; only bets when a
+        # real, robust edge exists, otherwise recommends SKIP.
+        self.bayesian_engine = BayesianOptimalEngine()
         self.wheel_math = WheelMath(settings.SPINWHEEL_SEQUENCE, settings.VALID_NUMBERS)
         # Unified continuous-learning brain: fuses physics + bayes + markov +
         # the GPU LSTM and learns each one's trust weight from every spin.
@@ -133,12 +138,27 @@ class MainViewModel:
         """
         history = self.tracker.get_recent_actuals(self.history_length)
 
+        # AI-Optimal: the Bayesian engine owns its own conservative EV sizing
+        # (stakes only on a statistically-robust edge), so route it directly.
+        if self.selected_engine == "AI-Optimal":
+            allocs = self.bayesian_engine.recommend(
+                history, self.current_capital, self.risk_percentage
+            )
+            # Blend manual prior into the displayed confidence, if provided.
+            if hasattr(self, "manual_percentages") and sum(self.manual_percentages.values()) > 0:
+                for a in allocs:
+                    manual_conf = self.manual_percentages.get(a["number"], 0.0) / 100.0
+                    a["confidence"] = (0.65 * a["confidence"]) + (0.35 * manual_conf)
+            return allocs
+
         if self.selected_engine == "Ensemble":
             engine = self.continuous
         elif self.selected_engine == "TF-LSTM":
             engine = self.lstm_engine
         elif self.selected_engine == "Markov":
             engine = self.markov_engine
+        elif self.selected_engine == "Bayesian":
+            engine = self.bayesian_engine
         else:
             engine = self.heuristic_engine
 

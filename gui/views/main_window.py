@@ -95,7 +95,7 @@ class MainWindow(ctk.CTk):
         self.engine_var = ctk.StringVar(value=self.vm.selected_engine)
         self.engine_dropdown = ctk.CTkOptionMenu(
             header,
-            values=["Ensemble", "Markov", "TF-LSTM", "Heuristic"],
+            values=["AI-Optimal", "Ensemble", "Markov", "TF-LSTM", "Heuristic"],
             variable=self.engine_var,
             command=self._on_engine_change,
             width=140,

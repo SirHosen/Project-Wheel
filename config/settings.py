@@ -5,7 +5,7 @@ config/settings.py — Application configuration, constants, and UI themes.
 
 # Bumped whenever the prediction/betting/reporting logic changes. Stamped onto
 # every exported audit report so upgrades and audits are traceable.
-APP_VERSION = "1.6.1"
+APP_VERSION = "1.7.0"
 
 # ---------------------------------------------------------
 # Wheel Configuration
@@ -93,3 +93,14 @@ LEARNING_STATE_PATH = "models/continuous_state.json"
 ENSEMBLE_EMA_LR = 0.08       # how fast model trust adapts per spin
 ENSEMBLE_TEMPERATURE = 0.15  # softmax sharpness for blend weights
 ENSEMBLE_WARMUP_SPINS = 30   # spins before markov/lstm earn full trust weight
+
+# ---------------------------------------------------------
+# Bayesian-Optimal engine (predictors/bayesian_optimal.py)
+# The provably-optimal predictor for an i.i.d. wheel: a Dirichlet-Multinomial
+# posterior + statistically-gated EV/edge detector. Only stakes when a number's
+# LOWER credible bound is robustly +EV (real bias), else recommends SKIP.
+# ---------------------------------------------------------
+BAYES_OPT_PRIOR_STRENGTH = len(SPINWHEEL_SEQUENCE)  # 54 pseudo-obs from layout
+BAYES_OPT_CI_Z = 1.96        # credible-interval width (~95%)
+BAYES_OPT_EV_MARGIN = 0.05   # conservative EV must clear this to bet
+BAYES_OPT_MIN_OBS = 25       # min real spins before any +EV bet is allowed

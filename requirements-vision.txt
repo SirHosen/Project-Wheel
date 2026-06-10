@@ -8,5 +8,5 @@
 # Reminder: this OBSERVES a wheel (angle / rest segment); it does NOT predict
 # future spins. A real spin is a chaotic physical process.
 
-opencv-python
-numpy
+opencv-python>=4.8
+numpy>=1.24

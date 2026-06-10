@@ -1,0 +1,12 @@
+# PROMPT 20: optional experimental camera wheel tracking.
+# Only needed for `python wheel_cam.py`. The main GUI/app + REST API work fine
+# WITHOUT these -- the vision layer degrades gracefully when cv2 is absent.
+#
+#   pip install -r requirements-vision.txt
+#   python wheel_cam.py --source 0
+#
+# Reminder: this OBSERVES a wheel (angle / rest segment); it does NOT predict
+# future spins. A real spin is a chaotic physical process.
+
+opencv-python>=4.8
+numpy>=1.24

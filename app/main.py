@@ -28,7 +28,7 @@ def init_tf_gpu():
 
     print("=" * 64)
     print(" Spin Wheel Predictor - Diagnostik")
-    print(f"  App version  : {_app_ver}   (terbaru = 1.7.0)")
+    print(f"  App version  : {_app_ver}   (terbaru = 1.27.0)")
     print(f"  TF version   : {tf.__version__}")
     try:
         built_cuda = tf.test.is_built_with_cuda()
@@ -79,4 +79,25 @@ def main():
     app.mainloop()
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Spin Wheel Predictor")
+    parser.add_argument(
+        "--serve", action="store_true",
+        help="Run the REST API server instead of the GUI.",
+    )
+    parser.add_argument("--host", default="127.0.0.1", help="API bind host.")
+    parser.add_argument("--port", type=int, default=8000, help="API bind port.")
+    parser.add_argument(
+        "--no-fastapi", action="store_true",
+        help="Force the stdlib http.server fallback even if FastAPI is installed.",
+    )
+    args = parser.parse_args()
+
+    if args.serve:
+        # REST mode: skip the GUI + TF GPU diagnostic; the ViewModel (and TF)
+        # is built lazily only when the first /predict request arrives.
+        from api.server import serve
+        serve(host=args.host, port=args.port, prefer_fastapi=not args.no_fastapi)
+    else:
+        main()

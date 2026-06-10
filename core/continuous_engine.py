@@ -35,6 +35,9 @@ from config import settings
 from core.physics_wheel import WheelPhysics
 
 
+_EPS = 1e-12
+
+
 def _normalize(d: dict) -> dict:
     total = float(sum(d.values()))
     if total <= 0:
@@ -68,8 +71,13 @@ class ContinuousLearningEngine:
 
         # Learning state (persisted): EMA accuracy per model + spins seen.
         self.scores = {m: 0.0 for m in self.MODELS}
+        # BMA (PROMPT 6): discounted predictive log-evidence per model.
+        self.log_evidence = {m: 0.0 for m in self.MODELS}
+        self.bma_discount = float(getattr(settings, "ENSEMBLE_BMA_DISCOUNT", 0.98))
+        self.bma_temperature = float(getattr(settings, "ENSEMBLE_BMA_TEMPERATURE", 1.0))
+        self.use_stacking = bool(getattr(settings, "ENSEMBLE_USE_STACKING", False))
         self.n_observed = 0
-        self.prediction_log = []  # rolling [{n, actual, picks{model:number}}]
+        self.prediction_log = []  # rolling [{i, actual, picks{model:number}, pa{model:prob}}]
         self._load_state()
 
     # ------------------------------------------------------------------ #
@@ -117,25 +125,90 @@ class ContinuousLearningEngine:
             "lstm": self.lstm_distribution(history),
         }
 
+    def model_distributions(self, history: list) -> dict:
+        """Public: each constituent model's normalized {number: prob}, dropping
+        any that are unavailable (e.g. an untrained LSTM). Used by the PROMPT 17
+        consensus filter as independent voters."""
+        return {m: d for m, d in self._all_distributions(history).items() if d}
+
     # ------------------------------------------------------------------ #
     # Adaptive weights (learned continuously)
     # ------------------------------------------------------------------ #
     def weights(self) -> dict:
-        """Blend weights = softmax of each model's EMA accuracy, BUT the
-        trainable models (markov, lstm) must EARN trust through a maturity gate
-        proportional to how many spins we have actually learned from.
+        """Bayesian Model Averaging (PROMPT 6).
 
-        Physics and bayes are statistically valid from spin #1 (closed-form and
-        seeded by the real wheel layout), so they anchor the ensemble. This
-        guarantees a cold-start prediction always reflects the real wheel and can
-        NEVER be hijacked by an undertrained model that is over-confident about a
-        rare number (e.g. an LSTM that collapsed onto 40 after a few epochs)."""
-        base = {m: math.exp(self.scores[m] / max(1e-6, self.temperature)) for m in self.MODELS}
+        Each model's blend weight is its Bayesian posterior probability given the
+        data: w_m is proportional to exp(log-evidence_m), where log-evidence is
+        the accumulated *predictive* log-likelihood the model assigned to the
+        spins that actually occurred (a prequential / discounted marginal
+        likelihood). A forgetting factor lets the mix adapt if a model's edge
+        changes over time -- this replaces the old softmax-of-EMA-accuracy.
+
+        The maturity gate is retained: the trainable models (markov, lstm) only
+        earn their full BMA weight as spins accumulate, so an undertrained,
+        over-confident model can never hijack a cold-start prediction. Physics
+        and bayes are valid from spin #1 and anchor the ensemble.
+        """
+        # Average ONLY over models that actually produced a prediction most
+        # recently. A model that is absent (e.g. no LSTM loaded) must never win
+        # BMA weight just because its neutral log-evidence (0) outranks the
+        # NEGATIVE log-evidence of the models that genuinely predicted. Without
+        # this guard a phantom model would dominate the reported mix.
+        active = {"physics", "bayes"}
+        if self.prediction_log:
+            last = self.prediction_log[-1]
+            active |= set(last.get("pa", last.get("picks", {})).keys())
+        candidates = [m for m in self.MODELS if m in active]
+        le = self.log_evidence
+        mx = max(le[m] for m in candidates)
+        temp = max(1e-6, self.bma_temperature)
+        base = {m: math.exp((le[m] - mx) / temp) for m in candidates}
         warmup = float(max(1, getattr(settings, "ENSEMBLE_WARMUP_SPINS", 30)))
         warm = min(1.0, self.n_observed / warmup)
         gate = {"physics": 1.0, "bayes": 1.0, "markov": warm, "lstm": warm}
-        gated = {m: base[m] * gate[m] for m in self.MODELS}
-        return _normalize(gated)
+        gated = {m: base[m] * gate[m] for m in candidates}
+        bma = _normalize(gated)
+        if self.use_stacking:
+            stk = self.stacking_weights()
+            if stk is not None:
+                blended = {m: (0.5 * bma.get(m, 0.0) + 0.5 * stk.get(m, 0.0)) * gate[m]
+                           for m in candidates}
+                bma = _normalize(blended)
+        return {m: bma.get(m, 0.0) for m in self.MODELS}
+
+    def stacking_weights(self, window: int = 200, iters: int = 100) -> dict:
+        """Optional log-loss-optimal stacking via EM mixture-weight fitting.
+
+        Finds weights that minimize the ensemble negative log-likelihood on
+        recent spins: -sum_t log( sum_m w_m * p_m(actual_t) ), using only the
+        per-model probability assigned to each realized outcome (stored in the
+        prediction log). Returns None if there is not enough logged data.
+        """
+        entries = [e for e in self.prediction_log if e.get("pa")]
+        if len(entries) < 20:
+            return None
+        entries = entries[-window:]
+        present = set(self.MODELS)
+        for e in entries:
+            present &= set(e["pa"].keys())
+        present = [m for m in self.MODELS if m in present]
+        if len(present) < 2:
+            return None
+        w = {m: 1.0 / len(present) for m in present}
+        for _ in range(iters):
+            num = {m: 0.0 for m in present}
+            for e in entries:
+                pa = e["pa"]
+                denom = sum(w[m] * max(_EPS, pa[m]) for m in present) or _EPS
+                for m in present:
+                    num[m] += (w[m] * max(_EPS, pa[m])) / denom
+            total = sum(num.values()) or 1.0
+            neww = {m: num[m] / total for m in present}
+            if max(abs(neww[m] - w[m]) for m in present) < 1e-6:
+                w = neww
+                break
+            w = neww
+        return {m: w.get(m, 0.0) for m in self.MODELS}
 
     def ensemble_probabilities(self, history: list) -> dict:
         dists = self._all_distributions(history)
@@ -164,6 +237,7 @@ class ContinuousLearningEngine:
         the result list BEFORE this spin (used to grade each model fairly)."""
         dists = self._all_distributions(history_before)
         picks = {}
+        pa_log = {}
         for m, d in dists.items():
             if d is None:
                 continue
@@ -171,8 +245,15 @@ class ContinuousLearningEngine:
             picks[m] = pick
             hit = 1.0 if pick == actual else 0.0
             self.scores[m] = (1.0 - self.ema_lr) * self.scores[m] + self.ema_lr * hit
+            pa = max(_EPS, float(d.get(actual, 0.0)))
+            pa_log[m] = pa
+            # discounted (forgetting) predictive log-evidence for BMA
+            self.log_evidence[m] = self.bma_discount * self.log_evidence[m] + math.log(pa)
         self.n_observed += 1
-        self.prediction_log.append({"i": self.n_observed, "actual": int(actual), "picks": picks})
+        self.prediction_log.append({
+            "i": self.n_observed, "actual": int(actual), "picks": picks,
+            "pa": {m: round(v, 6) for m, v in pa_log.items()},
+        })
         if len(self.prediction_log) > 500:
             self.prediction_log = self.prediction_log[-500:]
         self._save_state()
@@ -184,8 +265,10 @@ class ContinuousLearningEngine:
         w = self.weights()
         return {
             "n_observed": self.n_observed,
+            "method": "BMA+stacking" if self.use_stacking else "BMA",
             "weights": {m: round(w[m], 4) for m in self.MODELS},
             "accuracy": {m: round(self.scores[m], 4) for m in self.MODELS},
+            "log_evidence": {m: round(self.log_evidence[m], 3) for m in self.MODELS},
             "lstm_ready": bool(self.lstm_engine is not None and getattr(self.lstm_engine, "_trained", False)),
         }
 
@@ -206,6 +289,7 @@ class ContinuousLearningEngine:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump({
                     "scores": self.scores,
+                    "log_evidence": self.log_evidence,
                     "n_observed": self.n_observed,
                     "prediction_log": self.prediction_log[-200:],
                 }, f)
@@ -222,6 +306,8 @@ class ContinuousLearningEngine:
             for m in self.MODELS:
                 if m in state.get("scores", {}):
                     self.scores[m] = float(state["scores"][m])
+                if m in state.get("log_evidence", {}):
+                    self.log_evidence[m] = float(state["log_evidence"][m])
             self.n_observed = int(state.get("n_observed", 0))
             self.prediction_log = list(state.get("prediction_log", []))
         except Exception:

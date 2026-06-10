@@ -5,12 +5,14 @@ from typing import Callable, Optional
 from config import settings
 from data.tracker import Tracker
 from predictors.tf_lstm_engine import TfLstmEngine
-from predictors.heuristic_engine import HeuristicEngine
+from predictors.legacy.heuristic_engine import HeuristicEngine  # Lab Mode only
 from predictors.markov_engine import MarkovEngine
 from predictors.bayesian_optimal import BayesianOptimalEngine
 from core.wheel_math import WheelMath
-from core.betting import kelly_allocation
+from core.betting import kelly_allocation, net_kelly_portfolio
+from core.bootstrap_ci import attach_confidence_intervals
 from core.continuous_engine import ContinuousLearningEngine
+from core.tilt import TiltDetector
 
 class MainViewModel:
     """
@@ -42,9 +44,15 @@ class MainViewModel:
         # Bayesian frequency + Markov + the GPU LSTM and adapts their weights
         # from every confirmed spin.
         self.selected_engine = "Ensemble"
+        # PROMPT 12: Variance Harvest mode is OPT-IN and OFF by default. When ON,
+        # the conservative EV gate is bypassed in favour of tiny lottery-ticket
+        # stakes on high-multiplier numbers (high variance, long-run -EV).
+        self.harvest_mode = settings.HARVEST_MODE_DEFAULT
         
         self.latest_ev = None
         self.latest_prob = None
+        # Last computed allocations; logged as a full bet snapshot per round.
+        self.current_predictions = []
         
         self.risk_percentage = settings.DEFAULT_RISK_PCT
         self.history_length = 100
@@ -58,8 +66,24 @@ class MainViewModel:
         # so early on it respects your input, and over many spins it converges
         # to the true frequency you are actually seeing.
         self.manual_locked = False
-        self.WHEEL_PRIOR_STRENGTH = len(settings.SPINWHEEL_SEQUENCE)  # 54
+        # PROMPT 14: the manual % is a Dirichlet prior. ONE strength parameter
+        # (pseudo-observation count) now drives BOTH (a) how strongly the manual
+        # prior is blended into the engine and (b) how long the locked prior
+        # resists the observed live frequencies. User-adjustable via the slider.
+        self.manual_prior_strength = float(settings.MANUAL_PRIOR_STRENGTH_DEFAULT)
         self.manual_prior_counts = {num: 0.0 for num in settings.VALID_NUMBERS}
+
+        # PROMPT 16: anti-tilt guard. Watches for loss-chasing (N losing rounds
+        # in a short window with rising stakes) and enforces a cooldown. This
+        # protects bankroll/discipline only; it cannot beat a fair wheel.
+        self.tilt_detector = TiltDetector(
+            n_losses=settings.TILT_N_LOSSES,
+            window_minutes=settings.TILT_WINDOW_MINUTES,
+            cooldown_seconds=settings.TILT_COOLDOWN_SECONDS,
+            require_rising=settings.TILT_REQUIRE_RISING,
+            strict_rising=settings.TILT_STRICT_RISING,
+            enabled=settings.TILT_DETECT_ENABLED,
+        )
 
         self.is_processing = False
         
@@ -81,9 +105,25 @@ class MainViewModel:
         
     def get_current_history(self, limit=100) -> list:
         return self.tracker.get_recent_actuals(limit)
+
+    # ------------------------------------------------------------------ #
+    # PROMPT 16: anti-tilt guard accessors
+    # ------------------------------------------------------------------ #
+    def tilt_status(self) -> dict:
+        """Live cooldown status for the UI (auto-expires when time runs out)."""
+        try:
+            return self.tilt_detector.status()
+        except Exception:
+            return {"in_cooldown": False, "remaining_seconds": 0.0,
+                    "tilt_triggered": False, "trigger_count": 0, "enabled": False}
+
+    def acknowledge_tilt(self):
+        """User chose to take a breather / dismiss -- clear the cooldown."""
+        self.tilt_detector.clear_cooldown()
         
     def process_new_actual(self, actual: int, predicted: Optional[int], 
-                          profit_change: int, callback: Callable):
+                          profit_change: int, callback: Callable,
+                          bet_snapshot=None, engine_used=None):
         """Processes a new spin result."""
         if self.is_processing:
             return
@@ -96,7 +136,13 @@ class MainViewModel:
                 history_before = self.tracker.get_recent_actuals(1000)
                 # 1. Update Tracker
                 with self._lock:
-                    self.tracker.record_result(actual, predicted, profit_change)
+                    snap = bet_snapshot if bet_snapshot is not None else getattr(self, "current_predictions", None)
+                    eng = engine_used if engine_used is not None else self.selected_engine
+                    mode = "harvest" if getattr(self, "harvest_mode", False) else None
+                    self.tracker.record_result(
+                        actual, predicted, profit_change,
+                        bet_snapshot=snap, engine_used=eng, mode=mode,
+                    )
                     self.current_capital = self.tracker.data["current_capital"]
                     self.latest_ev = self.wheel_math.calculate_ev(actual)
                     self.latest_prob = self.wheel_math.true_probs.get(actual, 0.0)
@@ -104,6 +150,21 @@ class MainViewModel:
                     # the wheel's real behaviour after each confirmed spin.
                     if self.manual_locked:
                         self.refresh_live_percentages()
+                    # PROMPT 16: feed the anti-tilt guard. Total staked this
+                    # round = sum of token_bet across the bet snapshot; a round
+                    # counts as a loss when net profit is not positive.
+                    try:
+                        total_staked = 0.0
+                        if snap:
+                            total_staked = sum(
+                                float(b.get("token_bet", 0) or 0) for b in snap
+                            )
+                        self.tilt_detector.record(
+                            None, is_win=(profit_change > 0),
+                            staked=total_staked,
+                        )
+                    except Exception:
+                        import logging; logging.exception("tilt_detector.record failed")
                 
                 # 2. Continuous learning: grade every signal on this spin and
                 # adapt the ensemble weights (physics / bayes / markov / lstm).
@@ -132,11 +193,17 @@ class MainViewModel:
     def get_predictions(self) -> list:
         """Gets predictions from the currently selected engine.
 
-        The manual probability input is treated as a user-supplied PRIOR and is
-        blended into the output of WHICHEVER engine is active (weight 0.35),
-        so it always has an effect — not only for the heuristic engine.
+        The manual probability input is treated as a user-supplied DIRICHLET
+        PRIOR and is blended into WHICHEVER engine is active with a
+        data-dependent weight = strength / (strength + spins). The hunch counts
+        most at cold start and fades automatically as real spins accumulate.
         """
         history = self.tracker.get_recent_actuals(self.history_length)
+
+        # PROMPT 12: Variance Harvest mode (opt-in). Bypass the conservative EV
+        # gate and buy tiny lottery tickets on high-multiplier numbers instead.
+        if getattr(self, "harvest_mode", False):
+            return self._harvest_predictions(history)
 
         # AI-Optimal: the Bayesian engine owns its own conservative EV sizing
         # (stakes only on a statistically-robust edge), so route it directly.
@@ -144,11 +211,14 @@ class MainViewModel:
             allocs = self.bayesian_engine.recommend(
                 history, self.current_capital, self.risk_percentage
             )
-            # Blend manual prior into the displayed confidence, if provided.
-            if hasattr(self, "manual_percentages") and sum(self.manual_percentages.values()) > 0:
-                for a in allocs:
-                    manual_conf = self.manual_percentages.get(a["number"], 0.0) / 100.0
-                    a["confidence"] = (0.65 * a["confidence"]) + (0.35 * manual_conf)
+            # Blend the manual Dirichlet prior into the displayed confidence.
+            # Weight = strength / (strength + spins): the hunch fades as data grows.
+            from core.priors import apply_manual_prior
+            apply_manual_prior(
+                allocs, self.manual_percentages,
+                self.manual_prior_strength, len(history),
+            )
+            self.current_predictions = allocs
             return allocs
 
         if self.selected_engine == "Ensemble":
@@ -164,17 +234,140 @@ class MainViewModel:
 
         preds = engine.predict_next(history)
         if not preds:
+            self.current_predictions = []
             return []
 
-        # Blend manual probabilities (Signal weight 0.35) into any engine.
-        if hasattr(self, "manual_percentages") and sum(self.manual_percentages.values()) > 0:
-            for p in preds:
-                manual_conf = self.manual_percentages.get(p["number"], 0.0) / 100.0
-                p["confidence"] = (0.65 * p["confidence"]) + (0.35 * manual_conf)
+        # Blend the manual Dirichlet prior into ANY engine. The weight is
+        # data-dependent (strength / (strength + spins)), not a fixed 0.35.
+        from core.priors import apply_manual_prior, has_manual_input
+        _, _w = apply_manual_prior(
+            preds, self.manual_percentages,
+            self.manual_prior_strength, len(history),
+        )
+        if has_manual_input(self.manual_percentages) and _w > 0:
             preds.sort(key=lambda x: x["confidence"], reverse=True)
 
-        # EV-aware sizing: only stake on +EV numbers (half-Kelly), else recommend skip.
-        return kelly_allocation(preds, self.current_capital, self.risk_percentage)
+        # Quantify uncertainty: Bayesian preds already carry ci_low/ci_high/
+        # support; for Heuristic/LSTM we bootstrap the history (resample 200x,
+        # recompute confidence, 2.5/97.5 percentile). support falls back to the
+        # observation count so the UI can badge evidence strength.
+        try:
+            attach_confidence_intervals(engine, history, preds)
+        except Exception:
+            import logging
+            logging.exception("bootstrap CI failed")
+        ci_map = {
+            int(p["number"]): (p.get("ci_low"), p.get("ci_high"), p.get("support"))
+            for p in preds
+        }
+
+        # EV-aware sizing: correlation-aware net-Kelly portfolio. Because exactly
+        # one number wins per spin, stakes are mutually exclusive; this maximizes
+        # expected log-growth over the full outcome distribution instead of
+        # sizing each number independently (which over/under-counts that
+        # correlation). Falls back to SKIP when nothing clears the EV+evidence
+        # gate. Half-Kelly safety is the function default.
+        allocs = net_kelly_portfolio(preds, self.current_capital, self.risk_percentage)
+
+        # --- REALITY CHECK (anti-overconfidence guard) ---
+        # A single model's self-reported confidence is NOT a real probability.
+        # An under-trained LSTM can "collapse" onto a rare number (e.g. 30/40)
+        # and look certain, tricking the EV sizer into a losing bet (the evidence
+        # gate in kelly_allocation only fires for engines that expose a
+        # `support` field; LSTM/Heuristic do not, so their fake confidence used
+        # to slip through as a "bet 1" on a rare number). Before we risk ANY
+        # tokens, cross-check each pick against the Bayesian posterior built from
+        # the REAL observed frequencies. We keep a stake ONLY if that number is a
+        # statistically-robust +EV edge (lower credible bound beats break-even);
+        # otherwise we zero it out (SKIP). The engine may still SHOW its guess,
+        # but it cannot stake tokens without statistical evidence -- this makes
+        # every engine as safe as AI-Optimal when real tokens are on the line.
+        try:
+            robust = {
+                r["number"]: bool(r.get("robust_positive"))
+                for r in self.bayesian_engine.edge_report(history)
+            }
+            for a in allocs:
+                if a.get("token_bet", 0) > 0 and not robust.get(a["number"], False):
+                    a["token_bet"] = 0
+                    a["is_positive_ev"] = False
+        except Exception:
+            import logging
+            logging.exception("reality-check failed")
+
+        # --- PROMPT 17: MULTI-ENGINE CONSENSUS FILTER ---
+        # A single model's confidence is weak evidence. Cross-check each
+        # surviving stake against the INDEPENDENT votes of the physics / bayes /
+        # markov / lstm models: keep it only when >= CONSENSUS_MIN_AGREE of them
+        # rank that number in their top-N, otherwise zero it (SKIP). This curbs
+        # single-model overconfidence/noise. It FAILS OPEN when too few engines
+        # are available, and -- to be honest -- it cannot manufacture an edge a
+        # fair wheel doesn't give; it only filters risk.
+        try:
+            from core.consensus import apply_consensus_filter
+            engine_dists = self.continuous.model_distributions(history)
+            _, self.consensus_info = apply_consensus_filter(
+                allocs, engine_dists,
+                min_agree=settings.CONSENSUS_MIN_AGREE,
+                top_n=settings.CONSENSUS_TOP_N,
+                min_prob=settings.CONSENSUS_MIN_PROB,
+                enabled=settings.CONSENSUS_FILTER_ENABLED,
+            )
+        except Exception:
+            import logging
+            logging.exception("consensus filter failed")
+
+        # Carry the uncertainty bands onto the sized allocations so the
+        # prediction cards can render CI + support badges.
+        for a in allocs:
+            ci = ci_map.get(int(a["number"]))
+            if ci is not None:
+                if a.get("ci_low") is None:
+                    a["ci_low"] = ci[0]
+                if a.get("ci_high") is None:
+                    a["ci_high"] = ci[1]
+                if a.get("support") is None:
+                    a["support"] = ci[2]
+
+        self.current_predictions = allocs
+        return allocs
+
+    def _harvest_predictions(self, history) -> list:
+        """Variance Harvest sizing: tiny lottery tickets on high-multiplier
+        numbers. Bypasses the EV/evidence gate ON PURPOSE -- this is opt-in,
+        capped, and long-run -EV by design (see core/harvest.py).
+        """
+        from core.harvest import harvest_picks
+        # Belief distribution from the selected engine; fall back to Markov,
+        # which always yields a full distribution.
+        try:
+            if self.selected_engine == "AI-Optimal":
+                base = self.bayesian_engine.recommend(
+                    history, self.current_capital, self.risk_percentage)
+            elif self.selected_engine == "Ensemble":
+                base = self.continuous.predict_next(history)
+            elif self.selected_engine == "TF-LSTM":
+                base = self.lstm_engine.predict_next(history)
+            elif self.selected_engine == "Markov":
+                base = self.markov_engine.predict_next(history)
+            else:
+                base = self.markov_engine.predict_next(history)
+        except Exception:
+            import logging
+            logging.exception("harvest belief engine failed; using Markov")
+            base = self.markov_engine.predict_next(history)
+        if not base:
+            base = self.markov_engine.predict_next(history)
+        # Blend the manual Dirichlet prior (consistent with the other engine
+        # paths) before handing the belief to the harvest sizer.
+        from core.priors import apply_manual_prior
+        apply_manual_prior(
+            base, self.manual_percentages,
+            self.manual_prior_strength, len(history),
+        )
+        allocs = harvest_picks(base, self.current_capital)
+        self.current_predictions = allocs
+        return allocs
 
     def get_predictions_async(self, callback):
         """Run prediction OFF the UI thread, then invoke callback(allocs).
@@ -222,7 +415,7 @@ class MainViewModel:
         self.manual_percentages = {
             n: (v / total * 100.0) for n, v in self.manual_percentages.items()
         }
-        strength = self.WHEEL_PRIOR_STRENGTH
+        strength = self.manual_prior_strength
         self.manual_prior_counts = {
             n: self.manual_percentages[n] / 100.0 * strength
             for n in settings.VALID_NUMBERS
@@ -244,7 +437,7 @@ class MainViewModel:
 
         history = self.tracker.get_recent_actuals(1000)
         counts = Counter(history)
-        denom = self.WHEEL_PRIOR_STRENGTH + len(history)
+        denom = self.manual_prior_strength + len(history)
         if denom <= 0:
             return self.manual_percentages
         self.manual_percentages = {
@@ -252,6 +445,29 @@ class MainViewModel:
             for n in settings.VALID_NUMBERS
         }
         return self.manual_percentages
+
+    def set_manual_prior_strength(self, value) -> float:
+        """Set the Dirichlet prior strength (pseudo-observation count).
+
+        Clamped to [MIN, MAX]. If the manual % is currently locked, the prior
+        pseudo-counts are rescaled to the new strength and the live percentages
+        are recomputed immediately so the slider has an instant, visible effect.
+        """
+        from core.priors import clamp_strength
+
+        self.manual_prior_strength = clamp_strength(
+            value,
+            settings.MANUAL_PRIOR_STRENGTH_MIN,
+            settings.MANUAL_PRIOR_STRENGTH_MAX,
+            settings.MANUAL_PRIOR_STRENGTH_DEFAULT,
+        )
+        if self.manual_locked:
+            self.manual_prior_counts = {
+                n: self.manual_percentages.get(n, 0.0) / 100.0 * self.manual_prior_strength
+                for n in settings.VALID_NUMBERS
+            }
+            self.refresh_live_percentages()
+        return self.manual_prior_strength
 
     def export_audit_report(self, md_path: str) -> list:
         """Generate a detailed audit bundle (Markdown + JSON + raw CSV) from the

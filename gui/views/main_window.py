@@ -17,6 +17,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from collections import Counter
 
 from config import settings
+from core import analytics_charts as ac
 from gui.viewmodels.main_viewmodel import MainViewModel
 
 # Shorthands for the theme.
@@ -41,20 +42,31 @@ class MainWindow(ctk.CTk):
         self.resizable(True, True)
         self.configure(fg_color=C["background"])
 
-        # Root layout: header (fixed) / content (flex) / stats (flex).
-        self.grid_rowconfigure(0, weight=0)
-        self.grid_rowconfigure(1, weight=3)
-        self.grid_rowconfigure(2, weight=2)
+        # Root layout: header (fixed) / harvest banner / content (flex) / stats.
+        self.grid_rowconfigure(0, weight=0)   # header
+        self.grid_rowconfigure(1, weight=0)   # variance-harvest banner (hidden unless ON)
+        self.grid_rowconfigure(2, weight=3)   # content
+        self.grid_rowconfigure(3, weight=2)   # stats
         self.grid_columnconfigure(0, weight=1)
 
         self.current_predictions = []
 
         self._build_header()
+        self._build_harvest_banner()
         self._build_content()
         self._build_stats_zone()
 
         self._refresh_stats()
         self._refresh_header()
+
+        # Hidden "Lab Mode" (Ctrl+Shift+L): exposes the retired gambler's-fallacy
+        # heuristic for EDUCATION only -- it is intentionally absent from the
+        # main dropdown. Bound on both cases for keyboard-layout robustness.
+        self._lab_window = None
+        self._analytics_window = None
+        self._bankroll_window = None
+        self.bind_all("<Control-Shift-L>", self._open_lab_mode)
+        self.bind_all("<Control-Shift-l>", self._open_lab_mode)
 
     # ------------------------------------------------------------------ #
     # Small reusable helpers
@@ -95,7 +107,7 @@ class MainWindow(ctk.CTk):
         self.engine_var = ctk.StringVar(value=self.vm.selected_engine)
         self.engine_dropdown = ctk.CTkOptionMenu(
             header,
-            values=["AI-Optimal", "Ensemble", "Markov", "TF-LSTM", "Heuristic"],
+            values=["AI-Optimal", "Ensemble", "Markov", "TF-LSTM"],
             variable=self.engine_var,
             command=self._on_engine_change,
             width=140,
@@ -113,6 +125,20 @@ class MainWindow(ctk.CTk):
             header, text="ENGINE", font=font(11, "bold"), text_color=C["text_secondary"]
         ).pack(side="right", padx=(0, 8))
 
+        # PROMPT 12: Variance Harvest toggle (opt-in, OFF by default). Coloured
+        # in the error/red accent to signal it is the high-variance, -EV mode.
+        self.harvest_var = ctk.BooleanVar(value=self.vm.harvest_mode)
+        self.harvest_switch = ctk.CTkSwitch(
+            header,
+            text="VARIANCE HARVEST",
+            variable=self.harvest_var,
+            command=self._on_harvest_toggle,
+            font=font(11, "bold"),
+            progress_color=C["error"],
+            text_color=C["text_secondary"],
+        )
+        self.harvest_switch.pack(side="right", padx=(0, 24))
+
         # Status indicator: a coloured dot + label (no emoji).
         gpu_on = getattr(self.vm, "gpu_available", False)
         dot_color = C["primary"] if gpu_on else C["text_secondary"]
@@ -126,12 +152,34 @@ class MainWindow(ctk.CTk):
             status, text=status_text, font=font(12, "bold"), text_color=dot_color
         ).pack(side="left", padx=8)
 
+    def _build_harvest_banner(self):
+        """Full-width red warning shown ONLY while Variance Harvest is active."""
+        self.harvest_banner = ctk.CTkFrame(self, fg_color=C["error"], corner_radius=0)
+        ctk.CTkLabel(
+            self.harvest_banner,
+            text=("VARIANCE HARVEST MODE — lottery tickets only on high-multiplier "
+                  "numbers. Long-run -EV but high-variance potential."),
+            font=font(12, "bold"),
+            text_color=C["background"],
+        ).pack(pady=5)
+        self._refresh_harvest_banner()
+
+    def _refresh_harvest_banner(self):
+        if getattr(self.vm, "harvest_mode", False):
+            self.harvest_banner.grid(row=1, column=0, sticky="ew")
+        else:
+            self.harvest_banner.grid_remove()
+
+    def _on_harvest_toggle(self):
+        self.vm.harvest_mode = bool(self.harvest_var.get())
+        self._refresh_harvest_banner()
+
     # ------------------------------------------------------------------ #
     # Content (input + predictions)
     # ------------------------------------------------------------------ #
     def _build_content(self):
         content = ctk.CTkFrame(self, fg_color="transparent")
-        content.grid(row=1, column=0, sticky="nsew")
+        content.grid(row=2, column=0, sticky="nsew")
         content.grid_columnconfigure(0, weight=38, uniform="cols")
         content.grid_columnconfigure(1, weight=62, uniform="cols")
         content.grid_rowconfigure(0, weight=1)
@@ -232,6 +280,34 @@ class MainWindow(ctk.CTk):
             justify="left",
         )
         self.lock_status_lbl.pack(fill="x", pady=(4, 0))
+
+        # PROMPT 14: Dirichlet prior strength. How many pseudo-observations the
+        # manual % is worth. The blend weight vs the engine = strength /
+        # (strength + spins), so a bigger value lets your hunch hold on longer
+        # before real data overrules it.
+        self.prior_lbl = ctk.CTkLabel(
+            body,
+            text=f"Kekuatan Prior Manual: {int(self.vm.manual_prior_strength)} (pseudo-spin)",
+            font=font(12), text_color=C["text"], anchor="w",
+        )
+        self.prior_lbl.pack(fill="x", pady=(12, 2))
+        self.prior_slider = ctk.CTkSlider(
+            body, from_=settings.MANUAL_PRIOR_STRENGTH_MIN,
+            to=settings.MANUAL_PRIOR_STRENGTH_MAX,
+            number_of_steps=(settings.MANUAL_PRIOR_STRENGTH_MAX
+                             - settings.MANUAL_PRIOR_STRENGTH_MIN),
+            command=self._on_prior_strength_change,
+            progress_color=C["info"], button_color=C["info"],
+            button_hover_color=C["primary"], fg_color=C["card"],
+        )
+        self.prior_slider.set(self.vm.manual_prior_strength)
+        self.prior_slider.pack(fill="x")
+        ctk.CTkLabel(
+            body,
+            text="Kecil = cepat percaya data nyata; besar = lama pegang tebakanmu.",
+            font=font(11), text_color=C["text_secondary"], anchor="w",
+            wraplength=300, justify="left",
+        ).pack(fill="x", pady=(2, 0))
 
         # --- History selector ---
         self._section_label(body, "Riwayat Dianalisis").pack(fill="x", pady=(18, 4))
@@ -362,7 +438,7 @@ class MainWindow(ctk.CTk):
     # ------------------------------------------------------------------ #
     def _build_stats_zone(self):
         stats_bg = ctk.CTkFrame(self, fg_color=C["panel"], corner_radius=0)
-        stats_bg.grid(row=2, column=0, sticky="nsew")
+        stats_bg.grid(row=3, column=0, sticky="nsew")
         stats_bg.grid_columnconfigure(0, weight=1)
         stats_bg.grid_rowconfigure(1, weight=1)
 
@@ -402,7 +478,32 @@ class MainWindow(ctk.CTk):
             fg_color=C["card"], hover_color=C["info"], text_color=C["text"],
         ).pack(side="right")
         ctk.CTkButton(
+            actions_f, text="IMPORT JSON", command=self._on_import_json, width=130,
+            font=font(12, "bold"), fg_color=C["card"], hover_color=C["info"],
+            text_color=C["text"],
+        ).pack(side="right", padx=(0, 8))
+        ctk.CTkButton(
+            actions_f, text="EXPORT JSON", command=self._on_export_json, width=130,
+            font=font(12, "bold"), fg_color=C["card"], hover_color=C["info"],
+            text_color=C["text"],
+        ).pack(side="right", padx=(0, 8))
+        ctk.CTkButton(
             actions_f, text="EXPORT LAPORAN AUDIT", command=self._on_export_audit, width=190,
+            font=font(12, "bold"), fg_color=C["secondary"], hover_color=C["info"],
+            text_color=C["background"],
+        ).pack(side="right", padx=(0, 8))
+        ctk.CTkButton(
+            actions_f, text="EXPORT GRAFIK AUDIT", command=self._on_export_charts, width=180,
+            font=font(12, "bold"), fg_color=C["card"], hover_color=C["info"],
+            text_color=C["text"],
+        ).pack(side="right", padx=(0, 8))
+        ctk.CTkButton(
+            actions_f, text="ANALYTICS", command=self._open_analytics_panel, width=130,
+            font=font(12, "bold"), fg_color=C["info"], hover_color=C["primary"],
+            text_color=C["background"],
+        ).pack(side="right", padx=(0, 8))
+        ctk.CTkButton(
+            actions_f, text="BANKROLL", command=self._open_bankroll_panel, width=130,
             font=font(12, "bold"), fg_color=C["secondary"], hover_color=C["info"],
             text_color=C["background"],
         ).pack(side="right", padx=(0, 8))
@@ -469,6 +570,15 @@ class MainWindow(ctk.CTk):
                 e.configure(state="disabled")
         self._update_perc_total()
 
+    def _on_prior_strength_change(self, value):
+        """Live-update the Dirichlet prior strength from the slider."""
+        s = self.vm.set_manual_prior_strength(value)
+        self.prior_lbl.configure(
+            text=f"Kekuatan Prior Manual: {int(round(s))} (pseudo-spin)"
+        )
+        if self.vm.manual_locked:
+            self._apply_live_percentages(self.vm.manual_percentages, lock=True)
+
     def _on_toggle_lock(self):
         if not self.vm.manual_locked:
             # Pull whatever is currently typed, then lock + seed the live prior.
@@ -480,7 +590,7 @@ class MainWindow(ctk.CTk):
             self.lock_status_lbl.configure(
                 text=(
                     f"Status: TERKUNCI - persen update otomatis tiap konfirmasi hasil "
-                    f"(prior 54 putaran + {spins} hasil nyata)."
+                    f"(prior {int(self.vm.manual_prior_strength)} putaran + {spins} hasil nyata)."
                 ),
                 text_color=C["primary"],
             )
@@ -501,7 +611,8 @@ class MainWindow(ctk.CTk):
             spins = len(self.vm.get_current_history(1000))
             self.lock_status_lbl.configure(
                 text=(
-                    f"Status: TERKUNCI - persen ter-update ({spins} hasil nyata + prior 54)."
+                    f"Status: TERKUNCI - persen ter-update ({spins} hasil nyata + "
+                    f"prior {int(self.vm.manual_prior_strength)})."
                 ),
                 text_color=C["primary"],
             )
@@ -516,6 +627,238 @@ class MainWindow(ctk.CTk):
 
     def _on_engine_change(self, choice):
         self.vm.selected_engine = choice
+
+    def _open_lab_mode(self, event=None):
+        """Hidden educational panel: WHY the gambler's-fallacy heuristic is wrong.
+
+        Shows the retired Heuristic engine's 'overdue' confidences side-by-side
+        with the TRUE fixed wheel frequencies, to make the point that 'overdue'
+        numbers are not more likely on a fair, memoryless wheel.
+        """
+        try:
+            if self._lab_window is not None and self._lab_window.winfo_exists():
+                self._lab_window.lift()
+                return
+        except Exception:
+            self._lab_window = None
+
+        from predictors.legacy.heuristic_engine import HeuristicEngine
+        win = ctk.CTkToplevel(self)
+        self._lab_window = win
+        win.title("Lab Mode - Kenapa Gambler's Fallacy Salah (edukasi)")
+        win.geometry("760x640")
+        win.configure(fg_color=C["background"])
+
+        ctk.CTkLabel(
+            win, text="LAB MODE - Heuristik 'Overdue' (BUKAN alat produksi)",
+            font=font(16, "bold"), text_color=C["secondary"],
+        ).pack(pady=(16, 4), padx=16, anchor="w")
+        ctk.CTkLabel(
+            win, wraplength=720, justify="left", font=font(12), text_color=C["text"],
+            text=(
+                "Heuristik ini menebak angka yang 'sudah lama tidak keluar' akan "
+                "segera muncul (gambler's fallacy). Pada roda yang ADIL & tanpa "
+                "memori, setiap putaran independen: peluang tiap angka SELALU sama "
+                "dengan fraksi luas segmennya, tak peduli riwayat. Grafik di bawah "
+                "membandingkan keyakinan heuristik dengan frekuensi roda sebenarnya "
+                "- kalau heuristik benar keduanya selalu cocok; nyatanya tidak."
+            ),
+        ).pack(pady=(0, 10), padx=16, anchor="w")
+
+        history = self.vm.tracker.get_recent_actuals(self.vm.history_length)
+        eng = HeuristicEngine()
+        preds = {int(p["number"]): float(p["confidence"]) for p in eng.predict_next(history)}
+        wheel = Counter(settings.SPINWHEEL_SEQUENCE)
+        total = sum(wheel.values())
+        nums = settings.VALID_NUMBERS
+        heur = [preds.get(n, 0.0) * 100 for n in nums]
+        true = [wheel.get(n, 0) / total * 100 for n in nums]
+
+        fig = Figure(figsize=(7.0, 3.6), dpi=100, facecolor=C["card"])
+        ax = fig.add_subplot(111)
+        ax.set_facecolor(C["card"])
+        x = range(len(nums))
+        ax.bar([i - 0.2 for i in x], heur, width=0.4, label="Heuristik 'overdue'", color=C["error"])
+        ax.bar([i + 0.2 for i in x], true, width=0.4, label="Frekuensi roda sebenarnya", color=C["primary"])
+        ax.set_xticks(list(x))
+        ax.set_xticklabels([str(n) for n in nums], color=C["text"])
+        ax.set_ylabel("Probabilitas (%)", color=C["text"])
+        ax.tick_params(colors=C["text"])
+        ax.legend(facecolor=C["panel"], labelcolor=C["text"])
+        ax.set_title("Keyakinan heuristik vs realita roda", color=C["text"])
+        fig.tight_layout()
+        canvas = FigureCanvasTkAgg(fig, master=win)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=16, pady=(0, 8))
+
+        ctk.CTkLabel(
+            win, wraplength=720, justify="left", font=font(11), text_color=C["text_secondary"],
+            text=("Kesimpulan: tidak ada angka yang 'wajib keluar'. Gunakan engine "
+                  "berbasis bukti (AI-Optimal / Ensemble) untuk keputusan nyata."),
+        ).pack(pady=(0, 14), padx=16, anchor="w")
+
+    def _open_analytics_panel(self, event=None):
+        """PROMPT 13: deep-analytics window with the four audit charts (2x2).
+
+        Reliability/calibration, per-number deviation heatmap, equity+drawdown,
+        and rolling win-rate. Diagnostics only - they reveal whether apparent
+        performance is real signal or just variance; they do not create edge.
+        """
+        try:
+            if self._analytics_window is not None and self._analytics_window.winfo_exists():
+                self._analytics_window.lift()
+                return
+        except Exception:
+            self._analytics_window = None
+
+        win = ctk.CTkToplevel(self)
+        self._analytics_window = win
+        win.title("Analytics Deep - Audit Visual")
+        win.geometry("1100x780")
+        win.configure(fg_color=C["background"])
+
+        ctk.CTkLabel(
+            win, text="ANALYTICS DEEP - audit visual",
+            font=font(16, "bold"), text_color=C["secondary"],
+        ).pack(pady=(14, 2), padx=16, anchor="w")
+        ctk.CTkLabel(
+            win, wraplength=1060, justify="left", font=font(11), text_color=C["text_secondary"],
+            text=(
+                "Diagnostik, BUKAN jaminan profit. (1) Reliability: makin dekat garis "
+                "diagonal makin jujur confidence-nya. (2) Heatmap deviasi = observed - "
+                "predicted per angka/engine (hijau/merah = bias). (3) Kurva ekuitas + "
+                "drawdown = P/L kumulatif dan lembah terdalam. (4) Win-rate bergulir "
+                "(window 50 ronde) = tren menang dari waktu ke waktu."
+            ),
+        ).pack(pady=(0, 8), padx=16, anchor="w")
+
+        grid_f = ctk.CTkFrame(win, fg_color="transparent")
+        grid_f.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+        for i in range(2):
+            grid_f.grid_rowconfigure(i, weight=1)
+            grid_f.grid_columnconfigure(i, weight=1)
+
+        figs = ac.build_all_figures(
+            self.vm.tracker.data, settings.VALID_NUMBERS, colors=C, window=50
+        )
+        order = [
+            ("reliability", 0, 0), ("deviation_heatmap", 0, 1),
+            ("equity_curve", 1, 0), ("rolling_winrate", 1, 1),
+        ]
+        self._analytics_canvases = []
+        for name, r, col in order:
+            cell = ctk.CTkFrame(grid_f, fg_color=C["card"], corner_radius=10)
+            cell.grid(row=r, column=col, sticky="nsew", padx=6, pady=6)
+            canvas = FigureCanvasTkAgg(figs[name], master=cell)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill="both", expand=True, padx=6, pady=6)
+            self._analytics_canvases.append(canvas)
+
+        ctk.CTkButton(
+            win, text="EXPORT GRAFIK AUDIT (PNG/PDF)", command=self._on_export_charts,
+            width=260, font=font(12, "bold"), fg_color=C["secondary"],
+            hover_color=C["info"], text_color=C["background"],
+        ).pack(pady=(0, 14))
+
+    def _on_export_charts(self):
+        """Save the four audit charts as 4 PNGs or a single combined PDF."""
+        path = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[("PNG (4 file terpisah)", "*.png"), ("PDF (1 file gabungan)", "*.pdf")],
+            initialfile="grafik_audit.png",
+        )
+        if not path:
+            return
+        fmt = "pdf" if path.lower().endswith(".pdf") else "png"
+        try:
+            files = ac.export_audit_charts(
+                self.vm.tracker.data, path, settings.VALID_NUMBERS,
+                colors=C, window=50, fmt=fmt,
+            )
+        except Exception as exc:
+            messagebox.showerror("Export Grafik", f"Gagal menyimpan grafik:\n{exc}")
+            return
+        messagebox.showinfo("Export Grafik", "Grafik audit disimpan:\n" + "\n".join(files))
+
+    def _open_bankroll_panel(self, event=None):
+        """PROMPT 15: daily & per-session bankroll report + calendar heatmap.
+
+        Bookkeeping, NOT an edge. On a fair wheel daily P/L is dominated by
+        variance; this view exists to audit drawdowns, losing-day streaks, and
+        whether profit is concentrated in a few lucky sessions.
+        """
+        from core.bankroll import format_report_text
+
+        try:
+            if self._bankroll_window is not None and self._bankroll_window.winfo_exists():
+                self._bankroll_window.lift()
+                return
+        except Exception:
+            self._bankroll_window = None
+
+        win = ctk.CTkToplevel(self)
+        self._bankroll_window = win
+        win.title("Bankroll - Harian & Per-Sesi")
+        win.geometry("1040x820")
+        win.configure(fg_color=C["background"])
+
+        ctk.CTkLabel(
+            win, text="BANKROLL - harian & per-sesi",
+            font=font(16, "bold"), text_color=C["secondary"],
+        ).pack(pady=(14, 2), padx=16, anchor="w")
+        ctk.CTkLabel(
+            win, wraplength=1000, justify="left", font=font(11),
+            text_color=C["text_secondary"],
+            text=(
+                "Pembukuan, BUKAN edge. Hari hijau bukan bukti sistem menang - di roda "
+                "adil P/L harian didominasi variance. Kalender heatmap: tiap kotak = 1 "
+                "hari, hijau profit / merah rugi. Grafik batang = P/L per hari + garis "
+                "ekuitas kumulatif."
+            ),
+        ).pack(pady=(0, 8), padx=16, anchor="w")
+
+        charts_f = ctk.CTkFrame(win, fg_color="transparent")
+        charts_f.pack(fill="both", expand=True, padx=12, pady=(0, 6))
+        figs = ac.build_bankroll_figures(self.vm.tracker.data, colors=C)
+        self._bankroll_canvases = []
+        for name in ("calendar_heatmap", "daily_pnl"):
+            cell = ctk.CTkFrame(charts_f, fg_color=C["card"], corner_radius=10)
+            cell.pack(fill="both", expand=True, padx=4, pady=4)
+            canvas = FigureCanvasTkAgg(figs[name], master=cell)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill="both", expand=True, padx=6, pady=6)
+            self._bankroll_canvases.append(canvas)
+
+        report_box = ctk.CTkTextbox(
+            win, height=210, font=("Courier New", 11), fg_color=C["card"],
+            text_color=C["text"],
+        )
+        report_box.pack(fill="x", expand=False, padx=12, pady=(0, 6))
+        report_box.insert("1.0", format_report_text(self.vm.tracker.data))
+        report_box.configure(state="disabled")
+
+        ctk.CTkButton(
+            win, text="EXPORT GRAFIK BANKROLL (PNG/PDF)", command=self._on_export_bankroll,
+            width=280, font=font(12, "bold"), fg_color=C["secondary"],
+            hover_color=C["info"], text_color=C["background"],
+        ).pack(pady=(0, 14))
+
+    def _on_export_bankroll(self):
+        """Save the bankroll charts as 2 PNGs or a single combined PDF."""
+        path = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[("PNG (2 file terpisah)", "*.png"), ("PDF (1 file gabungan)", "*.pdf")],
+            initialfile="grafik_bankroll.png",
+        )
+        if not path:
+            return
+        fmt = "pdf" if path.lower().endswith(".pdf") else "png"
+        try:
+            files = ac.export_bankroll_charts(self.vm.tracker.data, path, colors=C, fmt=fmt)
+        except Exception as exc:
+            messagebox.showerror("Export Bankroll", f"Gagal menyimpan grafik:\n{exc}")
+            return
+        messagebox.showinfo("Export Bankroll", "Grafik bankroll disimpan:\n" + "\n".join(files))
 
     def _on_set_modal(self):
         try:
@@ -586,7 +929,7 @@ class MainWindow(ctk.CTk):
 
         # Left: rank label + large number.
         numbox = ctk.CTkFrame(inner, fg_color="transparent")
-        numbox.grid(row=0, column=0, rowspan=3, padx=(0, 20), sticky="w")
+        numbox.grid(row=0, column=0, rowspan=4, padx=(0, 20), sticky="w")
         ctk.CTkLabel(
             numbox, text=f"PREDIKSI #{index + 1}", font=font(11, "bold"),
             text_color=C["text_secondary"],
@@ -626,6 +969,46 @@ class MainWindow(ctk.CTk):
             info, text=f"Potensi: +{pot}", font=font(14, "bold"), text_color=C["primary"]
         ).pack(side="right")
 
+        # Row 3: 95% confidence interval + evidence-strength (support) badge.
+        # The point confidence above is a single guess; the CI shows how much
+        # that guess wobbles, and the badge says whether enough real spins back
+        # it up. A wide band on a "RAW" badge = do not trust this number yet.
+        from core.bootstrap_ci import support_label
+        ci_low = p.get("ci_low")
+        ci_high = p.get("ci_high")
+        support = p.get("support")
+        ci_row = ctk.CTkFrame(inner, fg_color="transparent")
+        ci_row.grid(row=3, column=1, sticky="ew", pady=(8, 0))
+        if ci_low is not None and ci_high is not None:
+            ci_txt = f"CI 95%: [{ci_low * 100:.1f}%, {ci_high * 100:.1f}%]"
+        else:
+            ci_txt = "CI 95%: n/a"
+        ctk.CTkLabel(
+            ci_row, text=ci_txt, font=font(11), text_color=C["text_secondary"]
+        ).pack(side="left")
+        label, color_key = support_label(support)
+        sup_n = support if support is not None else 0
+        ctk.CTkLabel(
+            ci_row,
+            text=f"{label}  -  support: {sup_n} obs",
+            font=font(11, "bold"),
+            text_color=C[color_key],
+        ).pack(side="right")
+
+        # Inline mini-bar: full track = full 0-100% probability axis, the
+        # shaded segment = the 95% CI band (placed from ci_low to ci_high).
+        track = ctk.CTkFrame(inner, fg_color=C["panel"], height=8, corner_radius=4)
+        track.grid(row=4, column=1, sticky="ew", pady=(4, 0))
+        if ci_low is not None and ci_high is not None:
+            lo = max(0.0, min(1.0, float(ci_low)))
+            hi = max(0.0, min(1.0, float(ci_high)))
+            width = max(0.02, hi - lo)
+            band = ctk.CTkFrame(track, fg_color=C[color_key], corner_radius=4)
+            band.place(relx=lo, rely=0.0, relwidth=width, relheight=1.0)
+            # Point-estimate marker.
+            marker = ctk.CTkFrame(track, fg_color=C["info"], width=2)
+            marker.place(relx=max(0.0, min(0.99, conf)), rely=0.0, relwidth=0.01, relheight=1.0)
+
     def _on_confirm(self):
         actual = int(self.result_var.get())
         predicted = None
@@ -650,7 +1033,11 @@ class MainWindow(ctk.CTk):
 
         self._flash_cards(card_won)
         self.confirm_btn.configure(state="disabled", text="MENYIMPAN...")
-        self.vm.process_new_actual(actual, predicted, profit_change, self._on_confirm_done)
+        self.vm.process_new_actual(
+            actual, predicted, profit_change, self._on_confirm_done,
+            bet_snapshot=list(self.current_predictions),
+            engine_used=self.vm.selected_engine,
+        )
 
     def _flash_cards(self, card_won):
         if not self.current_predictions:
@@ -769,6 +1156,50 @@ class MainWindow(ctk.CTk):
         if path:
             self.vm.tracker.export_csv(path)
             messagebox.showinfo("Export", f"Data berhasil diekspor ke:\n{path}")
+
+    def _on_export_json(self):
+        path = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("JSON Files", "*.json")],
+            initialfile="history_export.json",
+        )
+        if not path:
+            return
+        try:
+            self.vm.tracker.export_json(path)
+        except Exception as exc:
+            messagebox.showerror("Export JSON", f"Gagal mengekspor:\n{exc}")
+            return
+        messagebox.showinfo("Export JSON", f"Riwayat (history + meta) diekspor ke:\n{path}")
+
+    def _on_import_json(self):
+        path = filedialog.askopenfilename(filetypes=[("JSON Files", "*.json")])
+        if not path:
+            return
+        append = messagebox.askyesno(
+            "Import JSON",
+            "Pilih mode import:\n\nYA  = GABUNG (tambahkan ke data yang ada)\n"
+            "TIDAK = GANTI (timpa semua data lama)\n\nLanjut?",
+        )
+        mode = "append" if append else "replace"
+        try:
+            stats = self.vm.tracker.import_json(path, mode=mode)
+        except Exception as exc:
+            messagebox.showerror("Import JSON", f"Gagal mengimpor:\n{exc}")
+            return
+        # Refresh in-memory capital + dashboard after the import.
+        try:
+            self.vm.current_capital = self.vm.tracker.data.get("current_capital", 1000)
+        except Exception:
+            pass
+        self.current_predictions = []
+        self._show_message_card("Data diimpor", "Tekan HITUNG PREDIKSI untuk melanjutkan.")
+        self._refresh_stats()
+        self._refresh_header()
+        messagebox.showinfo(
+            "Import JSON",
+            f"Berhasil ({mode}). Total ronde sekarang: {stats.get('total', 0)}.",
+        )
 
     def _on_export_audit(self):
         path = filedialog.asksaveasfilename(

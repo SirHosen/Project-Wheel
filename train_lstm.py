@@ -56,6 +56,8 @@ def load_history(csv_path=None):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--csv", default=None, help="Optional CSV of past results")
+    ap.add_argument("--compare-attention", action="store_true",
+                    help="Backtest attention vs vanilla LSTM and report the lift")
     args = ap.parse_args()
 
     import tensorflow as tf
@@ -81,6 +83,20 @@ def main():
         print(f"Akurasi baseline      : {report['baseline_acc'] * 100:.1f}%")
         print(f"Selisih (lift)        : {report['lift'] * 100:+.1f}%")
         print(f"Putusan               : {report['verdict']}")
+
+    if args.compare_attention:
+        from predictors.tf_lstm_engine import compare_attention_vs_vanilla
+        print("\n== Perbandingan: attention vs vanilla (walk-forward) ==")
+        cmp = compare_attention_vs_vanilla(history)
+        a, v = cmp["attention"], cmp["vanilla"]
+        if a["model_acc"] is None or v["model_acc"] is None:
+            print("Data belum cukup untuk perbandingan yang valid.")
+        else:
+            print(f"Attention top-1 : {a['model_acc'] * 100:.1f}%")
+            print(f"Vanilla   top-1 : {v['model_acc'] * 100:.1f}%")
+            lift = cmp["attention_minus_vanilla"]
+            print(f"Selisih (att-van): {lift * 100:+.1f}%")
+            print(f"Putusan          : {cmp['verdict']}")
 
     print("\n== Training penuh + simpan model ==")
     engine.train(history, bulk=True)

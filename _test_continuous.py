@@ -50,22 +50,28 @@ def test_observe_updates_scores_and_weights():
     with tempfile.TemporaryDirectory() as tmp:
         e = _fresh(tmp)
         w0 = e.weights().copy()
-        # Simulate spins where the result is ALWAYS the physics top pick (1):
-        # physics accuracy should climb and its weight should rise.
+        # Simulate spins where the result is ALWAYS the same number (1).
         hist = []
         for _ in range(40):
             e.observe(1, hist)
             hist.append(1)
         st = e.learning_status()
         assert st["n_observed"] == 40
-        # Physics clearly learned to be reliable here.
+        assert st["method"] == "BMA"
+        # Top-pick accuracy still climbs (physics always picks 1, the winner).
         assert e.scores["physics"] > 0.7
         w = e.weights()
         assert abs(sum(w.values()) - 1.0) < 1e-9
-        # After warmup it shares trust with the other now-proven models, but
-        # always keeps a strong, non-degenerate anchor share.
-        assert w["physics"] >= 0.2
-        print("after 40 spins -> weights:", st["weights"], "acc:", st["accuracy"])
+        # Under BMA the weight reflects CALIBRATED probability, not just top-pick
+        # accuracy: bayes and markov assign ~1.0 to the realized outcome while
+        # physics is stuck at its fixed ~0.37 area-fraction, so they correctly
+        # earn more weight than physics here. This is the intended improvement
+        # over the old softmax-of-accuracy blend.
+        assert w["bayes"] > w["physics"], w
+        assert e.log_evidence["bayes"] > e.log_evidence["physics"]
+        # The blended prediction is still anchored to the correct number.
+        assert e.predict_next(hist)[0]["number"] == 1
+        print("after 40 spins -> weights:", st["weights"], "logev:", st["log_evidence"])
 
 
 def test_state_persists_across_instances():

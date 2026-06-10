@@ -3,49 +3,84 @@ import json
 import pandas as pd
 from datetime import datetime
 
+from data.sqlite_store import SqliteStore, empty_data
+
 class Tracker:
     """Unified Data Pipeline and History Tracker."""
     
-    def __init__(self, history_file="data/history.json"):
+    def __init__(self, history_file="data/history.json", db_file=None):
         self.history_file = history_file
+        # Derive the SQLite path as a sibling of history_file when not given
+        # explicitly. This keeps the production default identical
+        # (data/history.json -> data/history.db) while ensuring any custom
+        # history_file (tests, alternate profiles) gets ISOLATED storage
+        # instead of silently sharing the global data/history.db.
+        if db_file is None:
+            base, _ = os.path.splitext(history_file)
+            db_file = base + ".db"
+        self.db_file = db_file
         self.ensure_directory()
+        # PROMPT 18: SQLite is now the durable source of truth. history.json is
+        # kept as a human-readable mirror/backup and stays the import/export
+        # format. Legacy history.json files auto-migrate on first launch.
+        self.store = SqliteStore(db_file)
         self.data = self.load_data()
         
     def ensure_directory(self):
         os.makedirs(os.path.dirname(self.history_file), exist_ok=True)
         
     def load_data(self) -> dict:
+        # 1) SQLite already holds data -> it is the source of truth.
+        try:
+            if not self.store.is_empty():
+                return self.store.load()
+        except Exception as e:
+            print(f"Error reading SQLite store: {e}")
+        # 2) Empty DB: auto-migrate a legacy history.json exactly once.
         if os.path.exists(self.history_file):
             try:
-                with open(self.history_file, 'r') as f:
-                    return json.load(f)
+                if self.store.migrate_from_json(self.history_file):
+                    import shutil
+                    import logging
+                    backup = self.history_file + ".migrated"
+                    try:
+                        shutil.copy2(self.history_file, backup)
+                        logging.info(
+                            f"Migrated {self.history_file} -> SQLite ({self.db_file}); "
+                            f"backup kept at {backup}"
+                        )
+                    except Exception:
+                        pass
+                    return self.store.load()
             except Exception:
                 import shutil
                 import logging
                 corrupt_file = self.history_file.replace(".json", ".corrupt.json")
                 try:
                     shutil.copy2(self.history_file, corrupt_file)
-                    logging.error(f"Failed to load {self.history_file}. Backed up to {corrupt_file}")
+                    logging.error(
+                        f"Failed to migrate {self.history_file}. Backed up to {corrupt_file}"
+                    )
                 except Exception:
                     pass
-                
-        return {
-            "current_capital": 1000,
-            "total_predictions": 0,
-            "wins": 0,
-            "losses": 0,
-            "profit": 0,
-            "history": [] # list of dicts: {timestamp, actual_number, predicted_number, profit_change}
-        }
+        # 3) Fresh start.
+        return empty_data()
         
     def save_data(self):
+        # Primary durable store: SQLite (transactional, crash-safe).
+        try:
+            self.store.save_all(self.data)
+        except Exception as e:
+            print(f"Error saving to SQLite: {e}")
+        # Mirror to JSON as a backup + automatic export (additive legacy format).
         try:
             with open(self.history_file, 'w') as f:
                 json.dump(self.data, f, indent=4)
         except Exception as e:
             print(f"Error saving data: {e}")
             
-    def record_result(self, actual_number: int, predicted_number: int, profit_change: int):
+    def record_result(self, actual_number: int, predicted_number: int, profit_change: int,
+                      bet_snapshot=None, engine_used=None, mode=None):
         is_win = (actual_number == predicted_number) if predicted_number else False
         
         self.data["total_predictions"] += 1
@@ -57,16 +92,105 @@ class Tracker:
         self.data["profit"] += profit_change
         self.data["current_capital"] += profit_change
         
-        self.data["history"].append({
+        record = {
             "timestamp": datetime.now().isoformat(),
             "actual_number": actual_number,
             "predicted_number": predicted_number,
             "profit_change": profit_change,
-            "is_win": is_win
-        })
+            "is_win": is_win,
+        }
+        # PROMPT 1: full per-round bet snapshot, stored ALWAYS (win or loss) so
+        # per-number accuracy / ROI can be audited. Backward compatible: legacy
+        # records simply carry an empty "bets" list.
+        if bet_snapshot:
+            record["bets"] = [
+                {
+                    "number": b.get("number"),
+                    "token_bet": b.get("token_bet", 0),
+                    "confidence": b.get("confidence"),
+                    "ev_per_token": b.get("ev_per_token"),
+                    "is_positive_ev": b.get("is_positive_ev"),
+                    "support": b.get("support"),
+                }
+                for b in bet_snapshot
+            ]
+        else:
+            record["bets"] = []
+        if engine_used is not None:
+            record["engine_used"] = engine_used
+        # PROMPT 12: tag the betting mode so Variance Harvest rounds can be
+        # audited separately. Legacy/conservative rounds simply omit this key.
+        if mode is not None:
+            record["mode"] = mode
+        self.data["history"].append(record)
         
         self.save_data()
         
+    def get_sessions(self, gap_minutes=30) -> list:
+        """Split history into sessions separated by idle gaps >= gap_minutes.
+
+        Returns a list of sessions, each a list of records in order. Records
+        without parseable timestamps cannot start a new session boundary; they
+        stay attached to the current run (backward compatible with legacy data).
+        """
+        from core.sessions import parse_ts
+        history = self.data.get("history", [])
+        sessions = []
+        cur = []
+        prev_ts = None
+        for rec in history:
+            ts = parse_ts(rec.get("timestamp", ""))
+            if cur and prev_ts is not None and ts is not None:
+                gap_min = (ts - prev_ts).total_seconds() / 60.0
+                if gap_min >= gap_minutes:
+                    sessions.append(cur)
+                    cur = []
+            cur.append(rec)
+            if ts is not None:
+                prev_ts = ts
+        if cur:
+            sessions.append(cur)
+        return sessions
+
+    def per_session_stats(self, gap_minutes=30, valid_numbers=None, sequence=None) -> list:
+        """Per-session summary: n_spins, dominant number, win rate, profit, chi^2."""
+        from collections import Counter
+        from core.sessions import chi_square_gof
+        if valid_numbers is None or sequence is None:
+            try:
+                from config import settings
+                valid_numbers = valid_numbers or settings.VALID_NUMBERS
+                sequence = sequence or settings.SPINWHEEL_SEQUENCE
+            except Exception:
+                valid_numbers = valid_numbers or []
+                sequence = sequence or []
+        out = []
+        for i, sess in enumerate(self.get_sessions(gap_minutes)):
+            actuals = [r.get("actual_number") for r in sess if r.get("actual_number") is not None]
+            n = len(actuals)
+            cnt = Counter(actuals)
+            dominant = cnt.most_common(1)[0][0] if cnt else None
+            wins = sum(1 for r in sess if r.get("is_win"))
+            profit = sum(r.get("profit_change", 0) for r in sess)
+            out.append({
+                "session_id": i,
+                "start": sess[0].get("timestamp") if sess else None,
+                "end": sess[-1].get("timestamp") if sess else None,
+                "n_spins": n,
+                "dominant_num": dominant,
+                "win_rate": (wins / n * 100.0) if n else 0.0,
+                "profit": profit,
+                "chi_square": chi_square_gof(actuals, valid_numbers, sequence),
+                "actuals": actuals,
+            })
+        return out
+
+    def session_drift(self, gap_minutes=30, alpha=0.05) -> dict:
+        """KS 2-sample drift verdict across the session timeline."""
+        from core.sessions import detect_session_drift
+        stats = self.per_session_stats(gap_minutes=gap_minutes)
+        return detect_session_drift([s["actuals"] for s in stats], alpha=alpha)
+
     def get_recent_actuals(self, limit=100) -> list:
         """Returns a list of the recent actual numbers for prediction models."""
         history = self.data.get("history", [])
@@ -89,6 +213,31 @@ class Tracker:
         df = pd.DataFrame(self.data["history"])
         df.to_csv(output_path, index=False)
         return output_path
+
+    def export_json(self, output_path="data/history_export.json"):
+        """PROMPT 18: export full history + meta to a JSON file (canonical shape)."""
+        d = os.path.dirname(output_path)
+        if d:
+            os.makedirs(d, exist_ok=True)
+        with open(output_path, 'w') as f:
+            json.dump(self.data, f, indent=4)
+        return output_path
+
+    def import_json(self, input_path, mode="replace"):
+        """PROMPT 18: import a JSON history file into SQLite, then reload.
+
+        mode='replace' overwrites everything; mode='append' keeps the existing
+        history and appends the imported records (totals are recomputed).
+        Returns the refreshed stats dict.
+        """
+        self.data = self.store.import_json(input_path, mode=mode)
+        # Keep the JSON mirror in sync after an import.
+        try:
+            with open(self.history_file, 'w') as f:
+                json.dump(self.data, f, indent=4)
+        except Exception:
+            pass
+        return self.get_stats()
 
     def get_streak(self) -> int:
         """Returns the current streak of wins."""
@@ -134,6 +283,18 @@ class Tracker:
         })
         return base
         
+    def get_per_number_bet_stats(self) -> dict:
+        """Per-number betting outcomes from the full snapshot log (PROMPT 1).
+        Returns {number: {bets, wins, total_staked, net_profit, hit_rate, roi}}.
+        """
+        from core.diagnostics import per_number_bet_stats
+        return per_number_bet_stats(self.data.get("history", []))
+
+    def get_engine_bet_distribution(self) -> dict:
+        """Aggregate performance grouped by the engine that made each call."""
+        from core.diagnostics import engine_bet_distribution
+        return engine_bet_distribution(self.data.get("history", []))
+
     def reset_data(self):
         """Resets all data to initial state."""
         self.data = {

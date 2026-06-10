@@ -1,4 +1,420 @@
+# v1.27.0 - Experimental camera wheel tracking (OpenCV) (PROMPT 20)
+
+## Audit fix (re-check semua 20 prompt)
+Saat audit ulang menyeluruh, ketemu 1 regression dari PROMPT 18: `Tracker`
+yang dibuat dengan `history_file` custom tapi tanpa `db_file` diam-diam memakai
+`data/history.db` GLOBAL (dan auto-migrate `data/history.json` asli) -> bikin
+test saling cemari. Fix: `db_file` kini OTOMATIS jadi sibling dari `history_file`
+kalau tidak diberi eksplisit. Default produksi tetap identik
+(`data/history.json` -> `data/history.db`), tapi history_file custom kini dapat
+storage TERISOLASI. Hasil audit: 26/26 file test HIJAU, py_compile seluruh tree OK.
+
+## DISCLAIMER PALING PENTING
+Ini bagian PALING eksperimental & PALING lemah dari semua project. Ia OBSERVASI
+roda fisik (estimasi sudut / kapan berhenti / mendarat di segmen mana). Ia
+**TIDAK dan TIDAK BISA** memprediksi hasil spin berikutnya -- spin asli itu
+proses fisik chaotic. Anggap ini alat REKAM/ANOTASI hasil, bukan dukun.
+
+## Arsitektur (inti murni + capture opsional)
+- **`vision/wheel_tracker.py` -- inti murni numpy, TANPA OpenCV.** Semua
+  geometri + state ada di sini, jadi 100% bisa di-unit-test di Python+numpy
+  polosan:
+  - `normalize_angle`, `angular_delta` (tahan wrap 0/360),
+  - `angle_from_point(center, point)` (0=kanan, 90=atas, 180=kiri, 270=bawah),
+  - `angle_to_segment_index` + `angle_to_number` (petakan sudut -> angka roda
+    pakai `SPINWHEEL_SEQUENCE` 54-segmen, plus skor keyakinan = seberapa di
+    tengah segmen),
+  - `mask_centroid` (centroid pixel dari mask),
+  - `AngleTracker`: hitung kecepatan sudut, deteksi BERHENTI (hanya setelah ada
+    gerakan nyata + N frame terakhir di bawah ambang -> diam awal tidak salah
+    dihitung sebagai selesai), latch sudut istirahat, map ke angka.
+- **`vision/camera.py` -- satu-satunya yang menyentuh OpenCV (OPSIONAL).**
+  Import-safe walau cv2 tidak terinstall: `opencv_available()` / `opencv_status()`,
+  dan `CameraWheelTracker.run()` melempar RuntimeError yang jelas (bukan crash).
+  - `build_mask` (HSV inRange, dukung multi-range mis. merah yang wrap hue),
+  - `frame_marker_angle(frame, center)` -> sudut marker per-frame,
+  - `detect_wheel_center` (Hough circle, fallback ke tengah frame),
+  - `CameraWheelTracker(source, ...)`: drive AngleTracker dari webcam/video.
+- **`wheel_cam.py` -- CLI.** `--source` (index kamera / file), `--duration`,
+  `--max-frames`, `--no-show`. Kalau cv2 tidak ada -> cetak cara install +
+  keluar bersih (app utama tetap jalan).
+
+## Cara pakai
+```
+pip install -r requirements-vision.txt     # opencv-python + numpy
+python wheel_cam.py --source 0             # webcam, ada jendela preview
+python wheel_cam.py --source clip.mp4 --no-show
+```
+Tempel marker warna terang (default: hijau) di pinggir roda biar kebaca.
+
+## Tes
+`_test_wheel_tracker.py` -> **37/37 LOLOS**: matematika sudut (normalize/delta/
+wrap, from_point 4 arah, segment index + offset, number mapping + confidence
+tengah vs tepi), mask_centroid (+ kosong->None), AngleTracker (spin melambat
+sampai berhenti + latch + map angka; diam tidak dianggap berhenti; kecepatan
+benar saat wrap 360), PLUS lapisan OpenCV pakai FRAME SINTETIS (marker hijau di
+kanan->~0deg, di atas->~90deg, tanpa marker->None, build_mask). COMPILE_OK:
+vision/* + wheel_cam.py. (Loop capture kamera tidak diuji -- tidak ada device --
+tapi ia hanya mendelegasikan ke helper yang sudah teruji.)
+
+## Penutup
+Ini menutup SEMUA 20 prompt audit (v1.8.0 -> v1.27.0). Dari sisi taruhan: tidak
+ada satu pun fitur baru yang mengubah kenyataan bahwa wheel ini house-edge dan
+nyaris acak. Yang berubah cuma KEJUJURAN, KEANDALAN DATA, dan PERKAKAS -- bukan
+edge.
+
+# v1.26.0 - REST API (FastAPI + stdlib fallback, --serve) (PROMPT 19)
+
+## Kenapa
+Biar engine prediksi + riwayat bisa diakses program lain (script, dashboard,
+bot, automasi) tanpa harus buka GUI. Sekalian misahin "otak" dari "tampilan".
+
+**Catatan jujur:** API cuma EXPOSE logika yang sudah ada -- nggak nambah akurasi
+sama sekali. Prediksi tetap estimasi probabilistik di proses (nyaris) acak,
+bukan jaminan hasil.
+
+## Arsitektur (3 lapis, 1 sumber kebenaran)
+- **`api/service.py` -- routing core murni stdlib.** Semua route, validasi,
+  dan serialisasi di sini. Transport HTTP cuma tipis di atasnya, jadi perilaku
+  identik di transport mana pun + 100% bisa di-unit-test tanpa framework web.
+  Logika berat (ViewModel/TensorFlow) di-inject lewat objek `backend`.
+- **`api/server.py` -- dua transport berbagi core yang sama:**
+  - **FastAPI + uvicorn** kalau terinstall -> Swagger docs interaktif di `/docs`,
+    skema request pydantic. Pengalaman "enak".
+  - **Fallback `http.server` stdlib** kalau belum -> ZERO dependency tambahan,
+    jadi API SELALU jalan walau Python polosan. Otomatis pindah, nggak bisa mati.
+- **`RealBackend`:** `/stats`, `/history`, `/record` cuma butuh Tracker ringan
+  (jalan walau tanpa TF). `/predict` baru bikin ViewModel penuh (lazy) saat
+  request pertama datang.
+
+## Endpoint
+- `GET  /health`  -> liveness + versi app
+- `GET  /stats`   -> modal, win rate, streak, frekuensi (advanced stats)
+- `GET  /history?limit=N` -> N record terakhir
+- `POST /predict` -> `{engine?, history_length?}` -> daftar prediksi
+- `POST /record`  -> `{actual_number, profit_change, predicted_number?, bets?, engine_used?, mode?}` -> stats terbaru
+- `GET  /` -> daftar endpoint; FastAPI: `/docs` (Swagger) + `/redoc`
+
+Validasi: limit/angka non-integer, field wajib hilang, bets bukan list, body
+bukan objek, JSON rusak -> semua balas 4xx JSON yang rapi (bukan 500/crash).
+
+## Cara pakai
+```
+python app/main.py --serve                  # http://127.0.0.1:8000 (auto FastAPI kalau ada)
+python app/main.py --serve --port 9000      # ganti port
+python app/main.py --serve --no-fastapi      # paksa fallback stdlib
+pip install -r requirements-api.txt          # unlock FastAPI + Swagger /docs
+```
+Mode `--serve` melewati GUI + diagnostik TF; TF baru dimuat saat /predict pertama.
+
+## Tes
+`_test_api.py` -> **40/40 LOLOS**: routing core (health/stats/history/predict/
+record, default & query-string limit, trailing-slash, 404 method/path, 400 untuk
+tipe/field salah & body non-objek) PLUS end-to-end transport stdlib BENERAN
+(server di thread, di-hit pakai `requests`: health/stats/history/predict/record +
+JSON rusak->400 + unknown->404). COMPILE_OK: api/service, api/server, app/main.
+
+## Catatan
+- FastAPI/uvicorn TIDAK bisa di-runtime-test di sandbox build ini (tanpa
+  network -> nggak bisa pip install). Lapisan FastAPI sengaja dibikin shim tipis
+  di atas core yang sudah 100% teruji, dan sudah lolos py_compile. Fallback
+  stdlib teruji penuh end-to-end, jadi --serve dijamin jalan apa adanya.
+
+# v1.25.0 - SQLite Storage + Auto-Migration + JSON Import/Export (PROMPT 18)
+
+## Kenapa
+`history.json` ditulis ulang penuh tiap ronde. Aman di skala kecil, tapi rapuh:
+satu crash/disk-full saat tulis bisa mengorbankan SELURUH riwayat. SQLite
+memberi penyimpanan transaksional & crash-safe, tetap ringan (stdlib, 1 file).
+
+**Catatan jujur:** ini murni soal KEANDALAN DATA, bukan akurasi prediksi. Tidak
+mengubah satu pun angka taruhan atau edge. Cuma bikin riwayatmu lebih susah hilang.
+
+## Yang berubah
+- **Modul baru `data/sqlite_store.py`** (murni stdlib `sqlite3`+`json`):
+  - Tabel `meta` (current_capital/total/wins/losses/profit + key tak-standar apa pun)
+    dan `history` (kolom bertipe untuk query + blob JSON penuh tiap record sehingga
+    SEMUA field round-trip persis, termasuk `bets`, `engine_used`, `mode`, dan key masa depan).
+  - `save_all` (replace transaksional), `append_record`, `load`, `is_empty`, `count`.
+  - `migrate_from_json`, `import_json(mode="replace"|"append")`, `export_json`.
+- **`data/tracker.py` dirombak (tetap kompatibel penuh):**
+  - SQLite jadi sumber kebenaran durable. Bentuk `self.data` di memori TIDAK berubah,
+    jadi seluruh kode lain (stats, sesi, analytics, bankroll, tilt, consensus) jalan apa adanya.
+  - **Auto-migrasi sekali jalan:** kalau DB kosong tapi `history.json` ada, isinya diimpor
+    ke SQLite + backup disimpan di `history.json.migrated` (file lama TIDAK dihapus).
+  - `save_data()` nulis ke SQLite (utama) DAN mirror ke `history.json` (backup + auto-export,
+    format lama dipertahankan -- additive only).
+  - Method baru `export_json(path)` & `import_json(path, mode)`.
+- **GUI:** dua tombol baru di zona aksi -- **EXPORT JSON** (history+meta) dan **IMPORT JSON**
+  (dialog GABUNG vs GANTI). Setelah import, dashboard + modal langsung refresh.
+
+## Keamanan data
+- File lama tidak pernah dihapus; ada backup `.migrated`.
+- JSON corrupt saat migrasi -> di-backup ke `.corrupt.json`, app tetap jalan dari nol.
+- `RESET SEMUA` kini juga mengosongkan SQLite (lewat replace transaksional).
+
+## Tes
+`_test_sqlite_store.py` -> **55/55 LOLOS** (shape; fresh empty; save/load round-trip
+termasuk bets/None/engine/mode/key-masa-depan; replace; append_record + meta upsert;
+migrasi (sukses/file-hilang/non-dict); import replace & append (meta dihitung ulang);
+export->import; persistensi buka-ulang; integrasi Tracker end-to-end: auto-migrate +
+backup + reopen-from-sqlite + reset). COMPILE_OK: sqlite_store, tracker, main_window.
+
+# v1.24.0 - Multi-Engine Consensus Filter (PROMPT 17)
+
+**Ringkasan jujur:** filter RISIKO, bukan generator edge. Di roda adil & tanpa memori,
+kesepakatan banyak model TIDAK bikin angka "sudah waktunya". Yang dilakukan filter ini:
+mengurangi overconfidence/noise satu model dengan hanya membiarkan taruhan berdiri kalau
+>= K model INDEPENDEN sepakat. Ia tidak bisa menciptakan keuntungan yang tak diberikan
+pembayaran roda.
+
+## Baru
+- **`core/consensus.py`** (modul murni, stdlib saja, headless-testable):
+  - `top_numbers_from_dist(dist, top_n, min_prob)` / `top_numbers_from_preds(...)` - ambil
+    top-N "vote" dari distribusi {angka: prob} atau list prediksi.
+  - `tally_votes(engine_top)` - hitung berapa engine vote tiap angka (+ daftar voter).
+  - `consensus_numbers(votes, min_agree)` - himpunan angka yang didukung >= K engine.
+  - `build_votes(engine_distributions, ...)` - rakit votes + jumlah engine aktif (skip yang kosong).
+  - `apply_consensus_filter(predictions, engine_distributions, min_agree, top_n, ...)` - nol-kan
+    `token_bet` pada angka di bawah ambang konsensus; anotasi tiap prediksi dengan
+    `consensus_votes`/`consensus_voters` (+ `consensus_blocked`). **FAIL OPEN** (tidak
+    memblok apa pun) saat engine < min_agree atau filter dimatikan.
+- **`ContinuousLearningEngine.model_distributions(history)`** - akses publik ke distribusi
+  tiap model penyusun (physics / bayes / markov / lstm), buang yang tak tersedia. Dipakai
+  sebagai voter independen.
+- **Konfigurasi (`config/settings.py`):** `CONSENSUS_FILTER_ENABLED=True`,
+  `CONSENSUS_MIN_AGREE=2`, `CONSENSUS_TOP_N=3`, `CONSENSUS_MIN_PROB=0.0`.
+- **Wiring ViewModel:** di `get_predictions`, SETELAH reality-check, taruhan yang lolos
+  dicross-check ke vote independen physics/bayes/markov/lstm; hanya angka yang didukung
+  >= K engine yang boleh memasang token. Info disimpan di `self.consensus_info`.
+  (Jalur AI-Optimal & Harvest tidak melewati filter ini -- AI-Optimal sudah paling
+  konservatif, Harvest sengaja bypass semua gate.)
+
+## Uji
+- `_test_consensus.py`: **37/37 LOLOS** (top-N dari dist & preds; min_prob/min_confidence;
+  tally + dedup vote dalam satu engine; consensus_numbers untuk K=2/3; build_votes skip
+  distribusi kosong/None; blokir angka tanpa konsensus + anotasi vote; lolos saat cukup
+  vote; FAIL OPEN saat engine kurang; disabled; tidak menyentuh taruhan yang sudah 0;
+  min_agree=3).
+- `py_compile` OK: consensus, continuous_engine, settings, viewmodel.
+
+# v1.23.0 - Anti-Tilt Guard (TiltDetector) (PROMPT 16)
+
+**Ringkasan jujur:** fitur ini melindungi BANKROLL & DISIPLIN, bukan menambah edge.
+Di roda yang adil & tanpa memori, kalah beruntun TIDAK bikin menang "sudah waktunya",
+dan menaikkan taruhan cuma menaikkan variance + kerugian harapan. Guard ini berhenti
+memprediksi saat mendeteksi pola tilt dan memaksa jeda.
+
+## Baru
+- **`core/tilt.py`** (modul murni, stdlib saja, headless-testable):
+  - `is_rising(stakes, strict)` - deteksi taruhan menaik (strict = tiap langkah naik).
+  - `detect_tilt(events, n_losses=3, window_minutes=5, require_rising=True)` - cek pola
+    tilt pada N ronde terakhir: semua kalah, ada taruhan (>0), dalam jendela waktu, dan
+    (opsional) taruhan menaik. Mengembalikan `{triggered, reason, span_minutes, ...}`.
+  - `TiltDetector` - guard stateful dengan cooldown wajib: `record()`, `status()`,
+    `is_in_cooldown()`, `clear_cooldown()`, `reset()`; buffer bergulir; auto-expire.
+- **Konfigurasi (`config/settings.py`):** `TILT_DETECT_ENABLED`, `TILT_N_LOSSES=3`,
+  `TILT_WINDOW_MINUTES=5.0`, `TILT_COOLDOWN_SECONDS=60`, `TILT_REQUIRE_RISING=True`,
+  `TILT_STRICT_RISING=True`.
+- **Wiring ViewModel:** tiap ronde dikonfirmasi -> `tilt_detector.record(loss?, total_staked)`
+  (total taruhan = jumlah token_bet di snapshot; kalah = profit bersih <= 0).
+  Helper baru `tilt_status()` dan `acknowledge_tilt()`.
+- **UI:** banner merah anti-tilt di atas tombol "HITUNG PREDIKSI" dengan hitung mundur
+  cooldown (~1 dtk). Saat cooldown, tombol prediksi dikunci jadi "TENANG DULU (Ns)".
+  Klik banner = "saya sudah tenang" -> cooldown dibersihkan.
+
+## Uji
+- `_test_tilt.py`: **49/49 LOLOS** (is_rising; trip/tidak-trip karena jendela/menang/
+  taruhan-turun/ronde-tanpa-taruhan/data-kurang; pakai-ekor-saja; timestamp ISO;
+  parameter n_losses; cooldown aktif/auto-expire/clear/reset/disabled; buffer cap/min;
+  pulih lalu trip lagi).
+- `py_compile` OK: tilt, settings, viewmodel, main_window.
+
+# v1.22.0 - Laporan Bankroll Harian/Per-Sesi + Calendar Heatmap (PROMPT 15)
+
+Melihat KAPAN token benar-benar didapat atau hilang, bukan cuma satu angka total.
+Pembukuan, BUKAN edge: di roda adil P/L harian didominasi variance.
+
+## Baru
+- `core/bankroll.py` (modul murni, tanpa GUI/dep eksternal):
+  - `daily_report(data)` - agregasi per tanggal kalender (ronde, win-rate,
+    profit, best/worst ronde, max drawdown intra-hari) + ekuitas kumulatif
+    berjalan (`cum_profit`).
+  - `session_report(data, gap_minutes=30)` - agregasi per sesi main (jeda idle
+    >= gap = sesi baru).
+  - `overall_summary(data)` - hari hijau/merah, rata-rata harian, hari
+    terbaik/terburuk, max drawdown harian, rentet hari rugi terpanjang.
+  - `format_report_text(data)` - laporan teks rapi untuk panel GUI.
+- `core/analytics_charts.py`:
+  - `build_calendar_heatmap_figure` - kalender ala GitHub: kolom = minggu,
+    baris = hari (Sen-Min), warna sel = P/L hari itu (merah rugi / hijau
+    profit, skala simetris di sekitar 0).
+  - `build_daily_pnl_figure` - batang P/L per hari (hijau/merah) + garis
+    ekuitas kumulatif (sumbu kanan).
+  - `build_bankroll_figures` + `export_bankroll_charts` (PNG x2 / PDF x1,
+    headless-safe lewat Agg).
+- GUI: tombol **BANKROLL** membuka panel berisi kalender heatmap + grafik
+  P/L harian + laporan teks (harian & per-sesi) + tombol export grafik.
+- Laporan audit: section baru **## 13. Bankroll harian & per-sesi** (tabel
+  per hari + ringkasan hari hijau/merah, hari terbaik/terburuk, rentet rugi).
+
+## Catatan jujur
+- Hari hijau BUKAN bukti sistem menang. Fitur ini untuk audit drawdown dan
+  apakah profit cuma menumpuk di segelintir sesi/hari beruntung.
+
+## Tes
+- `_test_bankroll.py` - 54/54 LULUS (agregasi harian/sesi, ringkasan,
+  drawdown, rentet rugi, teks, grafik kalender/batang, export PNG/PDF, input
+  list-mentah & timestamp rusak diabaikan). Regresi analytics 20/20 + audit
+  diagnostics tetap hijau.
+
+## v1.21.0 - Manual % = Dirichlet prior (strength slider, buang blend 0.35 hardcoded)
+
+Dulu manual % dicampur ke engine dengan bobot TETAP 0.35 (0.65*engine + 0.35*manual) - tebakan dihitung sama beratnya entah kamu baru 3 spin atau 300 spin. Itu salah secara statistik. Sekarang manual % diperlakukan sebagai Dirichlet prior yang JUJUR.
+
+- KONSEP: manual % = prior senilai `strength` pseudo-observasi. Bobot campur vs engine = strength / (strength + jumlah_spin). Jadi:
+  - cold start (sedikit data) -> tebakanmu dominan (regularisasi berguna saat data minim).
+  - makin banyak spin nyata -> bobot prior MENGECIL otomatis; data akhirnya menang.
+  - strength == jumlah spin -> bobot 0.5 (imbang).
+  - di default 27 dengan ~50 spin -> bobot ~0.35: kompatibel dengan perilaku lama, TAPI sekarang bergerak mengikuti data.
+- SLIDER baru "Kekuatan Prior Manual" (5-100, default 27 pseudo-spin) di panel kiri, di bawah tombol KUNCI. Kecil = cepat percaya data nyata; besar = lama pegang tebakan. Saat terkunci, geser slider langsung me-recompute persen live.
+- UNIFIKASI: satu parameter `manual_prior_strength` kini menyetir BOTH (a) bobot blend ke engine DAN (b) seberapa lama prior terkunci bertahan terhadap frekuensi live (dulu hardcoded 54). Default turun 54 -> 27 (konsisten dengan slider).
+- Blend 0.35/0.65 hardcoded DIHAPUS dari ketiga jalur prediksi (AI-Optimal, engine umum, Variance Harvest) - semua lewat `core/priors.apply_manual_prior`.
+- Logika prior dipisah ke modul murni `core/priors.py` (dirichlet_prior_weight, blend_confidence, apply_manual_prior, clamp_strength) -> bisa diuji headless.
+- TES `_test_manual_prior.py` (23 cek, SEMUA LOLOS): limit (strength 0 -> bobot 0; data 0 -> bobot 1; strength==data -> 0.5), monotonik (naik dgn strength, turun dgn data), kompat-mundur (27@50 ~= 0.35), blend konveks dalam batas, has_manual_input, mutasi confidence benar, no-op saat manual kosong, clamp slider.
+- HONEST NOTE: prior TIDAK menciptakan sinyal di roda adil tanpa memori. Manfaatnya murni regularisasi cold-start + cara mengkodekan keyakinan yang otomatis memudar saat data nyata menumpuk.
+
+## v1.20.0 - Analytics Deep: panel audit visual + export grafik
+
+Panel diagnostik visual baru. INGAT: grafik bagus TIDAK menciptakan edge - ini alat untuk MELIHAT apakah performa yang kelihatan itu sinyal nyata atau cuma variance.
+
+- TOMBOL UI baru di zona statistik: "ANALYTICS" (buka panel 2x2) + "EXPORT GRAFIK AUDIT".
+- PANEL "Analytics Deep" (jendela 2x2) berisi 4 grafik matplotlib:
+  1. Reliability / kalibrasi per engine - confidence yang diklaim vs hit-rate sebenarnya, dengan garis diagonal "kalibrasi sempurna". Makin dekat diagonal = confidence makin jujur.
+  2. Heatmap deviasi per-angka x engine - observed minus predicted probability (hijau/merah diverging). Deviasi besar = miskalibrasi atau bias roda.
+  3. Kurva ekuitas + drawdown - P/L kumulatif, garis puncak, dan area drawdown ter-shading merah.
+  4. Win-rate bergulir (window 50 ronde) dengan baseline acak opsional.
+- EXPORT GRAFIK: simpan 4 PNG terpisah ATAU 1 PDF gabungan (pilih ekstensi di dialog). Headless-safe (pakai Agg canvas, tidak ganggu backend GUI).
+- Logika chart dipisah ke modul GUI-agnostic `core/analytics_charts.py` (tanpa tkinter) -> reducer murni (reliability_bins, per_number_deviation, equity_series, rolling_winrate) + figure builder + export, semuanya bisa diuji headless.
+- TES `_test_analytics_charts.py` (20 cek, SEMUA LOLOS): reducer benar (deviation = observed - predicted; drawdown = peak - equity; win-rate 0-100; peak monoton), 4 figure terbangun, data kosong degrade mulus, export PNG (4 file) + PDF (1 file) menghasilkan file non-kosong.
+
+## v1.19.0 - Variance Harvest mode (OPT-IN, default OFF)
+
+> PERINGATAN JUJUR: mode ini SENGAJA -EV jangka panjang. Tujuannya bukan profit konsisten, tapi memberi eksposur variance terkontrol (tiket lotre kecil) di angka multiplier tinggi. Default MATI; reality-check & EV-gate engine biasa tetap utuh saat mode ini OFF.
+
+- TOGGLE UI baru di header: switch merah "VARIANCE HARVEST" (default OFF). Saat ON, muncul BANNER merah full-width: "VARIANCE HARVEST MODE - lottery tickets only on high-multiplier numbers. Long-run -EV but high-variance potential."
+- LOGIC harvest (`core/harvest.py`, murni Python, teruji): bypass EV-gate; hanya pasang angka dengan multiplier >= 5 (skip #1/#2); confidence >= HARVEST_MIN_CONFIDENCE (5%); stake TETAP kecil = round(modal * 2%), min 1 token; maksimal 2 angka per ronde; ranking berdasarkan nilai-lotre (confidence x multiplier).
+- AUTO-SKIP ronde: 20% ronde dilewati acak untuk hemat modal (`should_skip_round`).
+- AUDIT terpisah: tiap ronde harvest ditandai `mode="harvest"` di history (additive, backward-compatible). Laporan audit dapat section baru "## 12. Variance Harvest" - jumlah ronde, profit, avg/ronde, win-rate, big-win (mult>=10), max drawdown, dan Sharpe-equivalent (mean/stddev per ronde).
+- SIMULATOR + tes (`_test_variance_harvest.py`, 23 cek, SEMUA LOLOS): default OFF terverifikasi; skip #1/#2; cap 2 pick; stake tetap 2%; gate confidence 5%; floor stake >=1; payout multiplier benar; skip-rate ~20% statistik; simulasi 500 spin -> modal TIDAK habis (bleed kecil, sisa >40%); big-multiplier hits tertangkap.
+- Settings baru: HARVEST_MODE_DEFAULT=False, HARVEST_MIN_CONFIDENCE=0.05, HARVEST_TARGET_MULTIPLIERS=[5,8,10,15,20,30,40], HARVEST_TOKEN_PCT=0.02, HARVEST_MAX_PICKS=2, HARVEST_SKIP_RATE=0.20.
+- KONTEKS: data nyata kamu (+53 profit dari 217 spin walau semua -EV) itu murni variance/lottery effect. Mode ini memformalkan eksposur itu dengan disiplin (stake kecil, capped, skip), BUKAN mengubahnya jadi edge. Sistem konservatif yang selalu SKIP itu benar secara matematis; harvest hanyalah pilihan sadar untuk "beli tiket lotre kecil".
+
+## v1.18.0 - LSTM upgrade: konteks lebih panjang + attention + feature engineering
+
+- KONTEKS lebih panjang: `LSTM_SEQUENCE_LENGTH` default 5 -> 10 (configurable). Untuk dataset 200+ spin, window 10 lebih pas untuk menangkap dependency jarak jauh.
+- SELF-ATTENTION: arsitektur baru (functional API) Embedding -> LSTM(128, return_sequences) -> MultiHeadAttention(4 head, dim 32) + residual + LayerNorm -> LSTM(64) -> Dense(64, relu) -> softmax. Toggle `LSTM_USE_ATTENTION` (default True); kalau False, layer attention dilewati (fallback arsitektur biasa) -> kompatibel mundur.
+- FEATURE ENGINEERING (BARU `predictors/lstm_features.py`, murni numpy, CAUSAL): tiap timestep dapat fitur tambahan di samping embedding angka - one-hot angka, frekuensi window-5 terakhir, time-since-last-same (cap /50), plus session_position relatif window. Toggle `LSTM_USE_FEATURES`.
+- AUGMENTASI saat training (bulk): `augment_drop_random_prefix` - sebagian window dipotong prefix acak (diganti PAD) supaya model tahan konteks pendek. Toggle `LSTM_AUGMENT`. Embedding pakai id geser +1 (0 = PAD).
+- KOMPAT MODEL LAMA: model .keras dari <=v1.17.0 (seq_len 5, tanpa fitur) otomatis ditolak oleh `try_load()` karena input-shape mismatch -> model baru dilatih ulang. (Saran: hapus `models/lstm_spinwheel.keras` lama saat clean start.)
+- PEMBANDING JUJUR: `compare_attention_vs_vanilla()` + flag `python train_lstm.py --compare-attention` -> backtest walk-forward attention vs vanilla pada DATA KAMU, laporkan lift. (Wajib dijalankan di mesin GPU; TF tidak ada di lingkungan build ini.)
+- Setting baru: LSTM_USE_ATTENTION=True, LSTM_ATTENTION_HEADS=4, LSTM_ATTENTION_DIM=32, LSTM_USE_FEATURES=True, LSTM_AUGMENT=True, LSTM_AUGMENT_PROB=0.5, LSTM_AUGMENT_MAX_FRAC=0.5.
+- Tes `_test_lstm_attention.py`: 29 cek lapisan numpy (bentuk fitur, one-hot, freq-5 ternormalisasi, time-since-same, geser +1, label di ruang kelas, session_position 0->1, augmentasi nambah baris + PAD prefix, setting ada). SEMUA LOLOS. Lapisan TF (build/train 1 epoch/predict shape, attention & vanilla) di-SKIP otomatis bila TF tak terpasang - jalan beneran di mesin GPU kamu.
+- CATATAN JUJUR: angka lift attention-vs-vanilla pada data nyata BELUM bisa dilaporkan dari sini karena TF tidak terpasang di sandbox build. Pada 235 spin yang ada, ekspektasi realistis tetap di sekitar baseline (~37-40%) - attention memperbaiki kapasitas model, bukan keacakan roda. Ukur sendiri dengan `--compare-attention`.
+
+## v1.17.0 - Heuristic dipensiunkan ke legacy (gambler's fallacy)
+
+- DIHAPUS dari dropdown utama: "Heuristic" tidak lagi jadi pilihan engine. Dropdown sekarang hanya ["AI-Optimal", "Ensemble", "Markov", "TF-LSTM"] - alasan: heuristik "overdue/proximity" adalah gambler's fallacy dan menyesatkan untuk roda adil.
+- PINDAH lokasi: `predictors/heuristic_engine.py` -> `predictors/legacy/heuristic_engine.py` (paket legacy baru + `__init__.py`). Path lama tetap bekerja sebagai shim back-compat, tapi memunculkan DeprecationWarning.
+- Import internal (viewmodel, `core/diagnostics`, `run_backtest`) sekarang menunjuk langsung ke `predictors.legacy.heuristic_engine` - tetap dipakai di backtest/diagnostics sebagai pembanding, bukan prediktor primer.
+- BARU Lab Mode tersembunyi (Ctrl+Shift+L): jendela edukatif yang menampilkan keyakinan heuristik 'overdue' berdampingan dengan frekuensi roda sebenarnya, plus penjelasan kenapa gambler's fallacy salah. Murni edukasi.
+- Ensemble/continuous engine dikonfirmasi TIDAK pernah mereferensikan heuristik sebagai model -> tidak ada perubahan diperlukan di sana.
+- Tes `_test_legacy_heuristic.py`: engine legacy berfungsi & ternormalisasi, modul fisik ada di predictors/legacy/, shim re-export kelas yang sama + memicu DeprecationWarning, dropdown bebas "Heuristic", handler Lab Mode ada, continuous engine bebas heuristik. SEMUA LOLOS (9/9).
+
+## v1.16.0 - Session detection & temporal-drift (KS)
+
+- BARU `core/sessions.py`: deteksi sesi & statistik drift TANPA scipy. chi-square goodness-of-fit, KS 2-sample (statistik D + p-value asimtotik distribusi Kolmogorov), `detect_session_drift` (pool separuh-awal vs separuh-akhir sesi), `recency_weights` (exponential decay, half-life).
+- `data/tracker.py`: `get_sessions(gap_minutes=30)` (pisah history per jeda idle), `per_session_stats()` (n_spins, angka dominan, win rate, profit, chi^2 per sesi), `session_drift()` (putusan KS).
+- `core/diagnostics.py`: section baru "## 11. Analisis per-sesi" - tabel per sesi + putusan "TERDETEKSI DRIFT ANTAR-SESI" bila KS p < alpha. Di data nyata sekarang: 1 sesi, abstain (butuh >=2 sesi) - jujur, tidak mengarang drift.
+- Konstanta settings: SESSION_GAP_MINUTES=30, SESSION_DRIFT_ALPHA=0.05, RECENCY_HALF_LIFE=50.
+- Tes `_test_sessions.py`: split per jeda, field per-sesi, chi^2 mendeteksi skew, KS membedakan distribusi identik vs disjoint, putusan drift + abstain 1-sesi, recency_weights monoton, render section 11. SEMUA LOLOS.
+- CATATAN JUJUR: chart profit per-sesi (small multiples) di UI ditunda ke panel matplotlib PROMPT 13 (v1.20.0) supaya tidak menambah dependency GUI setengah jadi sekarang. Logika & data per-sesi sudah lengkap dan teruji.
+
+## v1.15.0 - Confidence interval & support visualization
+
+- BARU `core/bootstrap_ci.py`: CI 95% non-parametrik via bootstrap (resample history 200x dgn replacement, recompute confidence, percentile 2.5/97.5) untuk engine tanpa CI native (Heuristic/LSTM). Bayesian pakai CI analitik dari posterior Dirichlet (tidak ditimpa).
+- `attach_confidence_intervals()` mengisi ci_low/ci_high untuk top-3 pick yg belum punya, dan support fallback = jumlah observasi.
+- `support_label()` badge kekuatan-evidence: <25 = RAW (cold start)/merah, 25-100 = WARMING UP/emas, >100 = STABLE/hijau.
+- Kartu prediksi (gui/views/main_window.py): baris baru "CI 95%: [low%, high%]" + badge support berkode-warna + mini-bar inline (track penuh = sumbu 0-100%, segmen ter-shade = pita CI, marker = titik estimasi).
+- viewmodel: lampirkan CI ke preds lalu propagasi ke alokasi taruhan; bungkus try/except supaya gagal-bootstrap tidak mematikan prediksi.
+- Tes `_test_ci_visualization.py`: batas CI valid (0<=low<=high<=1), reproducible per-seed, attach mengisi top-3 + support fallback, CI native Bayesian/Markov tidak ditimpa, tier label benar. SEMUA LOLOS.
+
+## v1.14.0 - Correlation-aware net-Kelly portfolio
+
+- BARU `core/betting.net_kelly_portfolio()`: alokasi taruhan sadar-korelasi. Karena tiap spin cuma SATU angka menang, stake antar-angka saling eksklusif (negatif berkorelasi) - token di A hangus tiap B menang. `kelly_allocation` lama menyize tiap angka independen lalu rescale ke budget, mengabaikan korelasi ini.
+- net-Kelly memaksimalkan expected LOG-GROWTH atas SELURUH distribusi outcome via alokasi integer greedy (marginal-gain). Greedy berhenti otomatis di optimum Kelly -> mustahil over-bet meski budget besar.
+- Fractional Kelly via penskalaan bankroll efektif (W = capital * kelly_fraction); di limit taruhan-tunggal cocok persis dengan half-Kelly lama.
+- Gate EV + evidence dipertahankan (ev>margin DAN support>=min_support); kalau tak ada yang lolos -> SKIP.
+- viewmodel kini pakai net_kelly_portfolio sebagai allocator (reality-check Bayesian tetap jalan di hilir).
+- Tes `_test_net_kelly.py`: bukti log-growth net-Kelly (0.1308) >= sizing independen (0.1163) pada model terkorelasi, knob fractional, budget dihormati, SKIP no-edge, evidence gate, single-edge.
+
+## v1.13.0 - Ensemble Bayesian Model Averaging (BMA)
+
+- `core/continuous_engine.weights()` ditulis ulang: dari softmax-EMA-akurasi menjadi BMA sejati. Bobot tiap model = posterior Bayesian ~ exp(log-evidence prediktif terdiskon). Tiap spin, log-evidence model += log p_model(hasil_nyata), dengan forgetting factor (ENSEMBLE_BMA_DISCOUNT=0.98) supaya adaptif.
+- BARU `stacking_weights()`: stacking optimal-log-loss via EM mixture-weight (opsional, ENSEMBLE_USE_STACKING=False default -> blend 50/50 dengan BMA bila aktif).
+- Maturity-gate dipertahankan: markov/lstm hanya dapat bobot penuh setelah cukup spin; physics+bayes tetap jangkar cold-start.
+- prediction_log kini simpan p_model(hasil) untuk stacking; state simpan log_evidence (backward-compatible, default 0).
+- learning_status() tampilkan method + log_evidence.
+- Tes `_test_continuous_bma.py`: cold-start 0.5/0.5 + gating, BMA hadiahi model adaptif (bayes>physics di realita berat-2), stacking valid, blend mode, predict/status utuh.
+
+## v1.12.0 - Manajemen risiko adaptif (AdaptiveRiskManager)
+
+- BARU `core/risk_manager.py`: menyetel risk_pct dari kondisi bankroll objektif.
+  - Drawdown lunak 20% -> potong stake linear; drawdown keras 35% -> STOP.
+  - Rem losing-streak 5 kalah -> stake separuh.
+  - Boost winning-streak 8 menang -> +25% (dibatasi, tidak liar).
+  - Stop harian: rugi >= 25% modal awal hari -> berhenti hari itu.
+- `effective_risk_pct(base)`, `risk_multiplier()`, `should_stop()`, `status()`. Persist `models/risk_state.json` (additive/drop-in).
+- Filosofi: kalau ragu, taruhan LEBIH KECIL. Ruin biasanya dari chasing, bukan dari model jelek.
+- Tes `_test_risk_manager.py`: sehat->penuh, drawdown keras->stop, lunak->skala turun, rem 5-kalah, boost 8-menang, stop harian, persistence.
+
+## v1.11.0 - Kalibrasi probabilitas (ReliabilityTracker)
+
+- BARU `core/calibration.py`: `ReliabilityTracker` mencatat (confidence, benar?) per-engine; hitung Brier, log-loss, Expected Calibration Error, reliability bins.
+- Isotonic regression p_raw -> p_terkalibrasi: pakai scikit-learn bila ada, fallback PAVA (Pool-Adjacent-Violators) murni Python -> jalan di mana saja tanpa dependensi keras.
+- `calibrate_predictions()` me-remap + renormalisasi confidence agar cocok dengan hit-rate nyata (lawan over-confidence).
+- Persist ke `models/calibration_state.json` (additive, drop-in, round-trip teruji).
+- Tes `_test_calibration.py`: PAVA monoton, Brier/log-loss, isotonic mengempiskan 0.8->~0.4 (over-confidence), persistence, renormalisasi.
+
+## v1.10.0 - Higher-order Markov (variable-order)
+
+- BARU `predictors/higher_order_markov.py`: `HigherOrderMarkovEngine` (order 1-4). Auto-pilih order via cross-validation walk-forward (log-loss + margin parsimoni), BACKOFF ke order lebih pendek bila context jarang, Laplace smoothing ke prior frekuensi roda. `support` = jumlah observasi context terpilih (gate bukti tetap jalan).
+- Terdaftar di `run_backtest.py` dan laporan audit sebagai "Markov-HO".
+- Tes `_test_higher_order_markov.py`: bentuk/normalisasi output, prior saat kosong, deteksi pola siklik (-> edge), data acak (-> no_edge).
+
+## v1.9.0 - Backtest walk-forward per-engine
+
+- BARU `core/backtest.py`: `WalkForwardBacktester` menilai engine apa pun secara walk-forward (top-1/top-3, Brier, log-loss, baseline most-frequent, two-proportion z, verdict edge/no_edge, simulasi profit unit-bet + Sharpe, kurva kalibrasi). Verdict "edge" HANYA jika z>1.96 mengalahkan baseline.
+- BARU `run_backtest.py`: CLI backtest data nyata (history.json + CSV). Loader CSV diperbaiki: baca KOLOM `actual_number` saja (tidak lagi dobel-hitung `predicted_number`).
+- Laporan audit kini memuat tabel "Backtest walk-forward semua engine" (guarded/lazy import, aman walau TF tidak ada).
+- Hasil data nyata (235 spin): AI-Optimal 40.2% = baseline 40.2% (z=0), Markov 38.7% (z=-0.31), Heuristic 32.5% -> SEMUA no_edge. Mengonfirmasi roda fair, tidak ada edge statistik.
+- Tes: `_test_backtest.py` (pola tersemat -> edge; acak -> no_edge; data kurang; kurva kalibrasi).
+
 # Changelog — Enhancement Pass oleh Notion AI
+
+## v1.8.0 — Logging snapshot taruhan penuh (fondasi audit) (oleh Mahapatih)
+- **Masalah yang diperbaiki**: `data/tracker.py` dulu hanya menyimpan `predicted_number` saat MENANG; saat kalah field-nya null, dan angka yang dipertaruhkan, confidence, EV, serta support TIDAK pernah dilog. Akibatnya audit akurasi/ROI per-angka mustahil dihitung jujur.
+- **Fix (snapshot penuh tiap ronde)**: `record_result()` kini menerima `bet_snapshot` (daftar `{number, token_bet, confidence, ev_per_token, is_positive_ev, support}`) + `engine_used`, dan menyimpannya sebagai field `bets` di SETIAP record — menang maupun kalah. Backward-compatible: record lama otomatis dianggap `bets: []`.
+- **Analitik baru**: `Tracker.get_per_number_bet_stats()` -> per-angka {#bet, menang, hit-rate, token dipasang, profit bersih, ROI}; `Tracker.get_engine_bet_distribution()` -> performa per-engine. Atribusi profit per-angka dijamin **menjumlah persis** ke profit terealisasi (diverifikasi di test).
+- **Audit report**: bagian baru "9. Taruhan per-angka" + tabel "Performa per-engine" di `laporan_audit.md`. Flag kualitas data kini cerdas: tahu kalau snapshot penuh sudah aktif.
+- **ViewModel/UI**: `get_predictions()` menyimpan `current_predictions`; `process_new_actual()` + `_on_confirm` meneruskan snapshot & nama engine yang aktif.
+- **Verifikasi (`_test_logging_snapshot.py`, semua lulus)**: (1) snapshot tersimpan saat menang DAN kalah; (2) backward-compat record lama; (3) stats per-angka benar + konsisten dengan profit total.
+
+## v1.7.1 — Reality-check taruhan: tidak ada engine yang bisa bertaruh "ngawur" lagi (oleh Mahapatih)
+- **Bug**: saat engine **TF-LSTM dipilih langsung**, output mentahnya (yang sering "kolaps" pede ke satu angka langka, mis. 30 atau 40) lolos ke penyizing taruhan TANPA pengaman — karena evidence-gate di `kelly_allocation` hanya aktif untuk engine yang punya field `support` (Markov/Bayes). LSTM & Heuristic tidak punya, jadi kepedean palsunya langsung jadi taruhan "bet 1" pada angka langka -> kalah terus.
+- **Akar masalah**: confidence yang dilaporkan SATU model BUKAN probabilitas nyata. Model overfit bisa "yakin" pada angka yang sebenarnya cuma ~1.7%.
+- **Fix (reality-check universal)**: sebelum token dipertaruhkan oleh engine APAPUN, tiap pick kini dicek-silang ke posterior Bayesian (dari frekuensi NYATA yang diamati). Stake hanya dipertahankan bila angka itu edge +EV yang robust (batas bawah kredibel melewati break-even); kalau tidak -> di-nol-kan (SKIP). Engine tetap boleh MENEBAK angkanya untuk ditampilkan, tapi tidak boleh mempertaruhkan token tanpa bukti statistik. Hasilnya: SEMUA engine kini seaman AI-Optimal soal risiko token.
+- **Catatan jujur**: di roda adil, efeknya semua engine akan sering SKIP (token_bet 0) — itu BENAR & sehat. Taruhan baru muncul kalau ada bias nyata. Untuk prediksi terbaik, tetap pakai **AI-Optimal**.
 
 ## v1.7.0 — Engine "AI-Optimal": predictor terbaik secara matematis (oleh Mahapatih)
 - **Kenapa ini "terbaik" — dan kenapa BUKAN neural net lebih besar**: hasil roda adalah tarikan i.i.d. dari distribusi kategori tetap. Untuk proses seperti itu, predictor Bayes-optimal berbentuk *closed-form*: posterior-predictive **Dirichlet-Multinomial**. Tidak ada LSTM/Markov/"pola" yang bisa mengalahkannya karena tidak ada sinyal urutan untuk dieksploitasi — log 235 spin milik user membuktikan LSTM (27%) kalah telak dari baseline frekuensi (44%). Model besar di sini cuma overfit noise.

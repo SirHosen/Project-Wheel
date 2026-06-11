@@ -1,3 +1,53 @@
+# v1.28.0 - Audit V3 fixes: win-rate jujur, perf, & rapikan struktur folder
+
+Menindaklanjuti audit eksternal ke-3 (V3) yang terverifikasi AKURAT. Tidak ada
+fitur prediksi baru -- ini soal KEJUJURAN metrik, efisiensi, dan kebersihan repo.
+
+## Perbaikan logika (jujur > enak dilihat)
+1. **Win rate kini = kemenangan TARUHAN beneran.** Sebelumnya tebakan benar
+   tapi 0 token (SKIP karena evidence-gate / -EV) ikut dihitung "menang",
+   membuat win rate terlihat lebih bagus dari kenyataan. Sekarang `is_win`
+   hanya true kalau ada token bertaruh pada angka yang keluar. Kartu di GUI
+   diberi label **"WIN RATE (TARUHAN)"**.
+2. **Metrik baru "Akurasi tebakan teratas" (top-1).** Ditampilkan TERPISAH di
+   panel statistik -- ini akurasi tebakan #1 apa adanya (lepas dari staking),
+   jadi dua angka itu tidak lagi saling tertukar. Disimpan per ronde
+   (`top1_hit`) dan diekspos lewat `get_stats()` (`top1_accuracy`,
+   `top1_graded`).
+3. **Tulis riwayat inkremental.** `Tracker.record_result()` kini meng-INSERT
+   satu baris via `store.append_record()` + upsert metadata, bukan menulis
+   ulang SELURUH riwayat (O(n)) tiap spin. Mirror `history.json` tetap dijaga.
+4. **`export_csv()` kolom `bets` kini JSON valid** (`json.dumps`), bukan repr
+   dict Python -> bisa di-parse ulang.
+5. **Buang dead code:** loop `fitted` mati di `calibration._pava()`, import
+   `kelly_allocation` & cabang engine `Bayesian` yang tak terjangkau di
+   ViewModel.
+
+## Modul eksperimen ditandai jelas (bukan dihapus)
+Kamu memang mau terus bereksperimen, jadi modul tak-tersambung DIPERTAHANKAN tapi
+ditandai `[EXPERIMENTAL / NOT WIRED]` + didokumentasikan di `experimental/README.md`:
+`AdaptiveRiskManager` (core/risk_manager.py), `GamblersFallacySimulator`
+(core/wheel_math.py), dan `HigherOrderMarkovEngine` (alat analisis saja --
+backtest jujur tidak menunjukkan ia lebih baik dari baseline, jadi sengaja TIDAK
+diekspos di dropdown engine).
+
+## Struktur folder dirapikan
+Root tadinya berisi 27 file test + script + CSV + artefak campur aduk. Sekarang:
+- `tests/` -- 26 file `_test_*.py` (tiap file kini menyisipkan root project ke
+  `sys.path` otomatis, jadi tetap bisa dijalankan dari mana saja selama dari root).
+- `scripts/` -- `train_lstm.py`, `run_backtest.py`, `physics_lab.py`, `wheel_cam.py`.
+- `samples/` -- `1.csv`, `2.csv` (data contoh; jalankan mis. `--csv samples/1.csv`).
+- `reports/` -- artefak hasil (`backtest_results.csv`), dengan `reports/arsip/`
+  menyimpan `laporan_audit.*` lama (v1.6.1) yang sudah usang.
+- `run_tests.sh` -- runner satu perintah; `.gitignore` baru (abaikan `*.keras`,
+  `data/*.db`, state json, `reports/`, `__pycache__/`, venv).
+
+**Verifikasi:** 26/26 file test HIJAU dari lokasi `tests/` baru; py_compile
+seluruh tree OK. Wheel tetap near-random i.i.d. -- reality-check tetap MENYALA;
+perbaikan win-rate ini justru menegaskan kejujuran itu.
+
+---
+
 # v1.27.0 - Experimental camera wheel tracking (OpenCV) (PROMPT 20)
 
 ## Audit fix (re-check semua 20 prompt)

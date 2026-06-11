@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""core/risk_manager.py - Adaptive bankroll risk control (PROMPT 5).
+"""[EXPERIMENTAL / NOT WIRED INTO APP FLOW] core/risk_manager.py - Adaptive bankroll risk control (PROMPT 5).
+
+Kept for experimentation (see experimental/README.md). This class is currently
+NOT connected to the ViewModel; the live app sizes stakes via core/betting.py
+(net_kelly_portfolio). Do not assume it affects in-app betting (audit V3 dead-code).
 
 The single biggest cause of ruin on a near-random game is NOT a bad model --
 it's betting too much after losses (chasing) and pressing too hard after wins.

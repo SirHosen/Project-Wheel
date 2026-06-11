@@ -67,11 +67,14 @@ class Tracker:
         return empty_data()
         
     def save_data(self):
-        # Primary durable store: SQLite (transactional, crash-safe).
+        # Full durable save: primary SQLite store (transactional) + JSON mirror.
         try:
             self.store.save_all(self.data)
         except Exception as e:
             print(f"Error saving to SQLite: {e}")
+        self._save_json_mirror()
+
+    def _save_json_mirror(self):
         # Mirror to JSON as a backup + automatic export (additive legacy format).
         try:
             with open(self.history_file, 'w') as f:
@@ -80,7 +83,11 @@ class Tracker:
             print(f"Error saving data: {e}")
             
     def record_result(self, actual_number: int, predicted_number: int, profit_change: int,
-                      bet_snapshot=None, engine_used=None, mode=None):
+                      bet_snapshot=None, engine_used=None, mode=None, top1_hit=None):
+        # A round counts as a betting WIN only when an actual stake landed on the
+        # winning number. The UI passes predicted_number = actual ONLY when the
+        # matched card had token_bet > 0 (audit V3 #1/#2), so this stays honest:
+        # a correct-but-zero-stake (SKIP) guess is NOT a win.
         is_win = (actual_number == predicted_number) if predicted_number else False
         
         self.data["total_predictions"] += 1
@@ -122,9 +129,30 @@ class Tracker:
         # audited separately. Legacy/conservative rounds simply omit this key.
         if mode is not None:
             record["mode"] = mode
+        # Honest top-1 guess accuracy, tracked SEPARATELY from betting win rate
+        # (audit V3 #1). None for legacy calls that don't supply it.
+        if top1_hit is not None:
+            record["top1_hit"] = bool(top1_hit)
         self.data["history"].append(record)
-        
-        self.save_data()
+
+        # Incremental O(1) durable write (audit V3 #3): append a single row to
+        # SQLite instead of rewriting the whole table every spin, then mirror to
+        # JSON. Falls back to a full save if the incremental write fails.
+        try:
+            meta = {
+                k: self.data[k]
+                for k in ("current_capital", "total_predictions",
+                          "wins", "losses", "profit")
+                if k in self.data
+            }
+            self.store.append_record(record, meta)
+        except Exception as e:
+            print(f"Error appending to SQLite: {e}")
+            try:
+                self.store.save_all(self.data)
+            except Exception as e2:
+                print(f"Error saving to SQLite: {e2}")
+        self._save_json_mirror()
         
     def get_sessions(self, gap_minutes=30) -> list:
         """Split history into sessions separated by idle gaps >= gap_minutes.
@@ -199,18 +227,37 @@ class Tracker:
     def get_stats(self) -> dict:
         total = self.data["total_predictions"]
         win_rate = (self.data["wins"] / total * 100) if total > 0 else 0.0
+        # Honest top-1 guess accuracy (audit V3 #1): share of rounds whose #1
+        # pick matched the result, INDEPENDENT of staking. Distinct from the
+        # betting win rate above; only graded over rounds that recorded it.
+        history = self.data.get("history", [])
+        graded = [r for r in history if r.get("top1_hit") is not None]
+        top1_acc = (sum(1 for r in graded if r.get("top1_hit")) / len(graded) * 100) if graded else None
         return {
             "capital": self.data["current_capital"],
             "total": total,
             "wins": self.data["wins"],
             "losses": self.data["losses"],
             "profit": self.data["profit"],
-            "win_rate": win_rate
+            "win_rate": win_rate,
+            "top1_accuracy": top1_acc,
+            "top1_graded": len(graded),
         }
         
     def export_csv(self, output_path="data/history.csv"):
-        """Exports history to CSV using Pandas for analytics."""
-        df = pd.DataFrame(self.data["history"])
+        """Exports history to CSV using Pandas for analytics.
+
+        The nested per-round bet snapshot is encoded as VALID JSON (audit V3 #4)
+        so the `bets` column can be parsed back later, instead of an
+        un-parseable Python dict repr (single quotes).
+        """
+        rows = []
+        for rec in self.data["history"]:
+            r = dict(rec)
+            if "bets" in r:
+                r["bets"] = json.dumps(r["bets"], ensure_ascii=False)
+            rows.append(r)
+        df = pd.DataFrame(rows)
         df.to_csv(output_path, index=False)
         return output_path
 

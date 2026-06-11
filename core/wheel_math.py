@@ -50,7 +50,12 @@ class WheelMath:
         return p, max(0.0, center - margin), min(1.0, center + margin)
 
 class GamblersFallacySimulator:
-    """Proves why heuristic strategies fail over time."""
+    """[EXPERIMENTAL / NOT WIRED] Proves why heuristic strategies fail over time.
+
+    Educational simulator; not used anywhere in the live app flow (audit V3
+    dead-code). Kept for experiments (see experimental/README.md). NOTE: WheelMath
+    in this same module IS used for EV calculations and must stay.
+    """
     
     @staticmethod
     def simulate_random_spins(wheel_math: WheelMath, rounds: int = 1000, seed=None) -> list:

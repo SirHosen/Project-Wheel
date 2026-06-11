@@ -9,7 +9,7 @@ from predictors.legacy.heuristic_engine import HeuristicEngine  # Lab Mode only
 from predictors.markov_engine import MarkovEngine
 from predictors.bayesian_optimal import BayesianOptimalEngine
 from core.wheel_math import WheelMath
-from core.betting import kelly_allocation, net_kelly_portfolio
+from core.betting import net_kelly_portfolio
 from core.bootstrap_ci import attach_confidence_intervals
 from core.continuous_engine import ContinuousLearningEngine
 from core.tilt import TiltDetector
@@ -123,7 +123,7 @@ class MainViewModel:
         
     def process_new_actual(self, actual: int, predicted: Optional[int], 
                           profit_change: int, callback: Callable,
-                          bet_snapshot=None, engine_used=None):
+                          bet_snapshot=None, engine_used=None, top1_hit=None):
         """Processes a new spin result."""
         if self.is_processing:
             return
@@ -142,6 +142,7 @@ class MainViewModel:
                     self.tracker.record_result(
                         actual, predicted, profit_change,
                         bet_snapshot=snap, engine_used=eng, mode=mode,
+                        top1_hit=top1_hit,
                     )
                     self.current_capital = self.tracker.data["current_capital"]
                     self.latest_ev = self.wheel_math.calculate_ev(actual)
@@ -227,8 +228,6 @@ class MainViewModel:
             engine = self.lstm_engine
         elif self.selected_engine == "Markov":
             engine = self.markov_engine
-        elif self.selected_engine == "Bayesian":
-            engine = self.bayesian_engine
         else:
             engine = self.heuristic_engine
 

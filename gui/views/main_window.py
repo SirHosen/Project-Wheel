@@ -446,7 +446,7 @@ class MainWindow(ctk.CTk):
         cards_f.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 8))
         for i in range(4):
             cards_f.grid_columnconfigure(i, weight=1, uniform="stat")
-        self.stat_winrate = self._make_stat_card(cards_f, "WIN RATE", "0.0%", 0, C["primary"])
+        self.stat_winrate = self._make_stat_card(cards_f, "WIN RATE (TARUHAN)", "0.0%", 0, C["primary"])
         self.stat_total = self._make_stat_card(cards_f, "TOTAL GAME", "0", 1, C["text"])
         self.stat_profit = self._make_stat_card(cards_f, "PROFIT", "0", 2, C["secondary"])
         self.stat_streak = self._make_stat_card(cards_f, "WIN STREAK", "0x", 3, C["info"])
@@ -1014,12 +1014,18 @@ class MainWindow(ctk.CTk):
         predicted = None
         profit_change = 0
         card_won = -1
+        top1_hit = False
 
         if self.current_predictions:
             # Total token yang dipertaruhkan di SEMUA angka yang disarankan.
             total_bet = sum(p["token_bet"] for p in self.current_predictions)
+            # Akurasi tebakan teratas (jujur): apakah pick #1 engine benar,
+            # TERLEPAS dari ada-tidaknya taruhan (audit V3 #1).
+            top1_hit = self.current_predictions[0]["number"] == actual
             for i, p in enumerate(self.current_predictions):
-                if p["number"] == actual:
+                # MENANG nyata butuh taruhan asli di angka pemenang. Tebakan
+                # benar tapi 0 token (SKIP) BUKAN kemenangan taruhan (audit V3 #1/#2).
+                if p["number"] == actual and p.get("token_bet", 0) > 0:
                     predicted = actual
                     # Payout angka menang sudah termasuk modal taruhan angka itu.
                     # Profit bersih = payout - SELURUH taruhan (termasuk yang kalah).
@@ -1028,7 +1034,8 @@ class MainWindow(ctk.CTk):
                     card_won = i
                     break
             if predicted is None:
-                # Tidak ada angka yang kena: kehilangan seluruh taruhan.
+                # Angka tidak kena, ATAU kena di kartu SKIP (0 token): rugi
+                # seluruh taruhan ronde ini (0 kalau memang murni SKIP).
                 profit_change = -total_bet
 
         self._flash_cards(card_won)
@@ -1037,6 +1044,7 @@ class MainWindow(ctk.CTk):
             actual, predicted, profit_change, self._on_confirm_done,
             bet_snapshot=list(self.current_predictions),
             engine_used=self.vm.selected_engine,
+            top1_hit=top1_hit,
         )
 
     def _flash_cards(self, card_won):
@@ -1101,9 +1109,15 @@ class MainWindow(ctk.CTk):
         adv = self.vm.get_advanced_stats()
         best = adv["best_round"]
         best_txt = f"+{best}" if best > 0 else str(best)
+        # Honest top-1 guess accuracy (audit V3 #1) shown SEPARATELY from the
+        # betting win rate so a string of correct-but-zero-stake guesses can't
+        # masquerade as profitable betting performance.
+        t1 = stats.get("top1_accuracy")
+        t1_txt = f"{t1:.1f}% (n={stats.get('top1_graded', 0)})" if t1 is not None else "-"
         self.adv_lbl.configure(
             text=(
-                f"Best: {best_txt}     Worst: {adv['worst_round']}     "
+                f"Akurasi tebakan teratas: {t1_txt}     Best: {best_txt}     "
+                f"Worst: {adv['worst_round']}     "
                 f"Avg/ronde: {adv['avg_profit']:.1f}     Max streak: {adv['max_streak']}x"
             )
         )

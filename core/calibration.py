@@ -39,11 +39,8 @@ def _pava(ys, ws):
                 i -= 1
         else:
             i += 1
-    # expand block values back to per-point fitted values
-    fitted = []
-    for swy, sw, val in blocks:
-        # number of original points in this block = sw (weights are counts)
-        fitted.append(val)
+    # blocks already carry the pooled, non-decreasing values; callers expand
+    # them to per-point values as needed (audit V3 #5: removed dead `fitted`).
     return blocks
 
 

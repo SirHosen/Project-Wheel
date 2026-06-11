@@ -16,22 +16,24 @@ Script ini akan:
   5. Menyimpan model terlatih supaya app langsung memuatnya saat dibuka.
 
 Pemakaian:
-    python train_lstm.py                 # pakai data/history.json
-    python train_lstm.py --csv 1.csv     # tambah actuals dari sebuah CSV
+    python scripts/train_lstm.py                      # pakai data/history.json
+    python scripts/train_lstm.py --csv samples/1.csv  # tambah actuals dari CSV
 """
 import argparse
 import json
 import os
 import sys
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
 from config import settings
 
 
 def load_history(csv_path=None):
     nums = []
-    hist_path = os.path.join(os.path.dirname(__file__), "data", "history.json")
+    # Resolve data/ relative to the PROJECT ROOT (parent of scripts/), NOT the
+    # scripts/ dir -- otherwise `python scripts/train_lstm.py` silently trains
+    # on 0 rows because scripts/data/history.json does not exist (audit V4 #1).
+    _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    hist_path = os.path.join(_root, "data", "history.json")
     if os.path.exists(hist_path):
         with open(hist_path, "r", encoding="utf-8") as f:
             data = json.load(f)

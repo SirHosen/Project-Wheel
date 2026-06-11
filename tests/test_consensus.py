@@ -3,7 +3,7 @@ import os as _os, sys as _sys  # path bootstrap: project root importable from su
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 """Unit tests for the PROMPT 17 multi-engine consensus filter (core/consensus.py).
 
-Pure / headless: no TensorFlow, no GUI. Run with: python _test_consensus.py
+Pure / headless: no TensorFlow, no GUI. Run with: python test_consensus.py
 """
 from core.consensus import (
     top_numbers_from_dist,
@@ -25,6 +25,7 @@ def check(cond, msg):
     else:
         FAIL += 1
         print(f"  FAIL: {msg}")
+    assert cond, msg  # pytest: surface failures as assertion errors
 
 
 # --------------------------------------------------------------------------- #

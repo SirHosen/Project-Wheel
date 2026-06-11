@@ -7,7 +7,7 @@ Pure-numpy geometry/state logic is tested directly. The OpenCV layer is tested
 with SYNTHETIC frames (no camera needed). Camera/video capture loops are not
 exercised (no device), but they delegate to these tested helpers.
 
-Run: python _test_wheel_tracker.py
+Run: python test_wheel_tracker.py
 """
 import os
 import sys
@@ -38,6 +38,7 @@ def check(name, cond):
     else:
         FAIL += 1
         print(f"  FAIL- {name}")
+    assert cond, name  # pytest: surface failures as assertion errors
 
 
 def approx(a, b, tol=1e-6):

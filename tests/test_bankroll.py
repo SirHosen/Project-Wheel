@@ -20,6 +20,7 @@ def check(name, cond):
     else:
         _fail += 1
         print(f"  FAIL: {name}")
+    assert cond, name  # pytest: surface failures as assertion errors
 
 
 def approx(a, b, tol=1e-6):

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""predictors/higher_order_markov.py - Variable-order Markov predictor (PROMPT 3).
+"""[EXPERIMENTAL / ANALYSIS-ONLY -- NOT WIRED INTO LIVE BETTING] predictors/higher_order_markov.py - Variable-order Markov predictor (PROMPT 3).
+
+Used only by scripts/run_backtest.py and diagnostics; intentionally NOT exposed
+in the engine dropdown because an honest walk-forward backtest does not show it
+beating the simple frequency baseline on this near-random wheel (audit V4 #4,
+see experimental/README.md).
 
 Extends the plain first-order MarkovEngine to context lengths 1..max_order
 ("after the sequence [a, b, c], what tends to come next?").

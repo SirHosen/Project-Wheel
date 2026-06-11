@@ -7,7 +7,7 @@ Covers the framework-agnostic routing core (ApiService) with a fake backend AND
 a real end-to-end run of the stdlib http.server transport hit with `requests`.
 No FastAPI needed (FastAPI path is a thin shim over the same service core).
 
-Run: python _test_api.py
+Run: python test_api.py
 """
 import os
 import sys
@@ -30,6 +30,7 @@ def check(name, cond):
     else:
         FAIL += 1
         print(f"  FAIL- {name}")
+    assert cond, name  # pytest: surface failures as assertion errors
 
 
 class FakeBackend:

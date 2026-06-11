@@ -2,7 +2,7 @@
 import os as _os, sys as _sys  # path bootstrap: project root importable from subfolder
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 """Headless tests for PROMPT 18 SQLite storage + auto-migration + JSON I/O.
-Run: python _test_sqlite_store.py  (stdlib only; Tracker test skipped if pandas missing)
+Run: python test_sqlite_store.py  (stdlib only; Tracker test skipped if pandas missing)
 """
 import json
 import os
@@ -25,6 +25,7 @@ def check(name, cond):
     else:
         FAIL += 1
         print(f"  FAIL- {name}")
+    assert cond, name  # pytest: surface failures as assertion errors
 
 
 def _tmp(suffix=".db"):

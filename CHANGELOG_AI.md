@@ -1,3 +1,42 @@
+# v1.28.1 - Audit V4 fixes: regresi path + migrasi statistik jujur
+
+Menindaklanjuti audit eksternal ke-4 (V4) yang memverifikasi v1.28.0 di level
+kode (6/7 temcommit lama beres) dan menemukan 1 regresi + beberapa sisa kecil.
+
+1. **[KRITIS] Path data `scripts/train_lstm.py` diperbaiki.** Setelah pindah ke
+   `scripts/`, `os.path.dirname(__file__)` resolve ke `scripts/data/history.json`
+   (tidak ada) -> training default diam-diam jalan dengan 0 data. Kini resolve
+   ke ROOT project (`<root>/data/history.json`).
+2. **Migrasi statistik lama -> `scripts/migrate_stats.py`.** Counter `wins`/
+   `losses` lama dihitung dengan definisi LAMA (tebakan 0-token = menang).
+   Script sekali-jalan ini menilai ulang SETIAP ronde dengan aturan jujur
+   (menang = ada stake nyata pada angka yang keluar), mem-backfill `top1_hit`
+   (= tebakan #1 benar), lalu membangun ulang `wins/losses/total/profit`.
+   Idempoten + bikin backup `history.json.premigrate.bak`. Pada data seed
+   sandbox: WIN RATE (taruhan) 67.8% (lama) -> **0.0%** (jujur, memang tak ada
+   taruhan), Akurasi top-1 -> **(n=40)**. **Jalankan sekali di mesinmu:**
+   `python scripts/migrate_stats.py`.
+3. **Contoh `--csv` di docstring** `train_lstm.py` & `run_backtest.py` diperbarui
+   jadi `samples/1.csv` (file CSV sudah pindah ke `samples/`).
+4. **Penanda `[EXPERIMENTAL / ANALYSIS-ONLY -- NOT WIRED]`** ditambahkan ke
+   docstring `predictors/higher_order_markov.py` biar konsisten dengan modul
+   eksperimen lain.
+
+5. **Test dimigrasi ke konvensi pytest.** Ke-26 file `tests/_test_*.py` di-rename
+   jadi `tests/test_*.py` (bisa di-discover `pytest`), dan harness `check()` kini
+   me-`raise AssertionError` saat gagal -- jadi pytest benar-benar mendeteksi
+   kegagalan, bukan cuma nge-print. `run_tests.sh` & README disesuaikan. Catatan:
+   pytest belum tentu terinstal -- `pip install pytest` lalu `pytest -q` dari root;
+   `bash run_tests.sh` tetap jalan tanpa pytest.
+
+Verifikasi: 26/26 test HIJAU (via run_tests.sh), py_compile seluruh tree OK.
+
+> Catatan binary di git: `.gitignore` baru berlaku untuk commit ke depan. Kalau
+> `models/*.keras` / state json terlanjur ke-track, lepas dengan
+> `git rm --cached <file>` (file tetap ada di disk).
+
+---
+
 # v1.28.0 - Audit V3 fixes: win-rate jujur, perf, & rapikan struktur folder
 
 Menindaklanjuti audit eksternal ke-3 (V3) yang terverifikasi AKURAT. Tidak ada

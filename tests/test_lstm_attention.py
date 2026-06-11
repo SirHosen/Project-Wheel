@@ -29,6 +29,7 @@ def check(name, cond):
     else:
         print(f"  [FAIL] {name}")
         _failures.append(name)
+    assert cond, name  # pytest: surface failures as assertion errors
 
 
 # ---------------------------------------------------------------- numpy layer

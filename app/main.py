@@ -28,7 +28,7 @@ def init_tf_gpu():
 
     print("=" * 64)
     print(" Spin Wheel Predictor - Diagnostik")
-    print(f"  App version  : {_app_ver}   (terbaru = 1.28.0)")
+    print(f"  App version  : {_app_ver}   (terbaru = 1.28.1)")
     print(f"  TF version   : {tf.__version__}")
     try:
         built_cuda = tf.test.is_built_with_cuda()

@@ -4,7 +4,7 @@ set -u
 cd "$(dirname "$0")"
 export PYTHONPATH=.
 pass=0; fail=0; failed=""
-for f in tests/_test_*.py; do
+for f in tests/test_*.py; do
     if python "$f" >/tmp/_pw_test.log 2>&1; then
         pass=$((pass+1)); echo "PASS  $f"
     else

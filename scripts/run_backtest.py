@@ -4,7 +4,7 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)
 """run_backtest.py - Standalone walk-forward backtest on real data (PROMPT 2).
 
 Usage:
-    python run_backtest.py --history data/history.json --csv 1.csv 2.csv
+    python scripts/run_backtest.py --history data/history.json --csv samples/1.csv samples/2.csv
 
 Loads actual spin results from a tracker history.json and/or CSV files, then
 grades every cheap (pure-Python) engine walk-forward and prints a comparison

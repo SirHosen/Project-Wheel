@@ -3,7 +3,7 @@ import os as _os, sys as _sys  # path bootstrap: project root importable from su
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 """Unit tests for the PROMPT 16 anti-tilt guard (core/tilt.py).
 
-Pure / headless: no TensorFlow, no GUI. Run with: python _test_tilt.py
+Pure / headless: no TensorFlow, no GUI. Run with: python test_tilt.py
 """
 from datetime import datetime, timedelta
 
@@ -20,6 +20,7 @@ def check(cond, msg):
     else:
         FAIL += 1
         print(f"  FAIL: {msg}")
+    assert cond, msg  # pytest: surface failures as assertion errors
 
 
 def _ev(dt, is_win, staked):

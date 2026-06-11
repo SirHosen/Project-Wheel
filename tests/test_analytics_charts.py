@@ -24,6 +24,7 @@ def check(name, cond):
     else:
         FAIL += 1
         print(f"  [FAIL] {name}")
+    assert cond, name  # pytest: surface failures as assertion errors
 
 
 def make_history(n=120, seed=7):

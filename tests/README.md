@@ -13,11 +13,11 @@ Dari **root project**:
 ./run_tests.sh
 
 # atau manual
-PYTHONPATH=. python tests/_test_logging_snapshot.py
+PYTHONPATH=. python tests/test_logging_snapshot.py
 ```
 
 Setiap file test sudah menyisipkan root project ke `sys.path`, jadi bisa juga
-dijalankan langsung (`python tests/_test_xxx.py`) selama dijalankan dari root.
+dijalankan langsung (`python tests/test_xxx.py`) selama dijalankan dari root.
 
 > Catatan: test memakai konvensi sendiri (`print("OK ...")`), bukan pytest.
 > Kalau mau migrasi ke pytest, ganti pengecekan jadi `assert` dan rename fungsi

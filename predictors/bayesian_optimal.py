@@ -29,7 +29,9 @@ This is the difference between "predict the most likely number" (frequency) and
 "find the bet that actually makes money" (this engine).
 """
 
+import json
 import math
+import os
 from collections import Counter
 
 from .base import BasePredictor
@@ -40,7 +42,8 @@ from core.betting import net_multiplier, ev_per_token, kelly_fraction_for
 class BayesianOptimalEngine(BasePredictor):
     """Dirichlet-Multinomial posterior predictor + statistically-gated EV engine."""
 
-    def __init__(self, prior_strength: float = None, ci_z: float = None):
+    def __init__(self, prior_strength: float = None, ci_z: float = None,
+                 wheel_prior_path: str = None):
         self.valid_numbers = list(settings.VALID_NUMBERS)
 
         # Frequency prior from the physical wheel layout (segment area fraction).
@@ -61,15 +64,58 @@ class BayesianOptimalEngine(BasePredictor):
         self.ev_margin = float(getattr(settings, "BAYES_OPT_EV_MARGIN", 0.05))
         self.min_obs = int(getattr(settings, "BAYES_OPT_MIN_OBS", 25))
 
+        # Camera-observed physical spins (vision learning loop). These are REAL
+        # i.i.d. draws from the wheel, so they enter the Dirichlet posterior as
+        # extra observed counts -- they do NOT touch betting win-rate stats.
+        # Missing/corrupt file => no extra evidence (graceful, backward compat).
+        self.wheel_prior_path = wheel_prior_path
+        self.observed_counts = self._load_observed_counts()
+
+    # ------------------------------------------------------------------ #
+    # Vision learning loop: fold camera-observed spins into the posterior
+    # ------------------------------------------------------------------ #
+    def _default_wheel_prior_path(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return os.path.join(root, "models", "wheel_prior.json")
+
+    def _load_observed_counts(self) -> dict:
+        counts = {n: 0 for n in self.valid_numbers}
+        path = self.wheel_prior_path or self._default_wheel_prior_path()
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                for k, v in (data.get("counts") or {}).items():
+                    try:
+                        num = int(k)
+                    except (TypeError, ValueError):
+                        continue
+                    if num in counts:
+                        counts[num] += int(v)
+        except Exception:
+            pass  # corrupt/unreadable => behave exactly as before (no extra data)
+        return counts
+
+    def reload_observed_counts(self):
+        """Re-read the learned wheel prior (call after learn_from_vision.py)."""
+        self.observed_counts = self._load_observed_counts()
+        return self.observed_counts
+
     # ------------------------------------------------------------------ #
     # Posterior
     # ------------------------------------------------------------------ #
     def _posterior(self, history: list) -> dict:
         """Return per-number dict with mean, ci_low, ci_high, alpha, beta, n."""
         obs = Counter(x for x in history if x in self.prior)
-        n = int(sum(obs.values()))
-        # Dirichlet concentration: alpha_n = prior_strength * prior[n] + count[n]
-        alpha = {k: self.prior_strength * self.prior[k] + obs.get(k, 0) for k in self.valid_numbers}
+        # Camera-observed physical spins count as real evidence too.
+        cam = self.observed_counts
+        n = int(sum(obs.values())) + int(sum(cam.values()))
+        # Dirichlet concentration: alpha_n = prior_strength * prior[n]
+        #                                   + camera_count[n] + betting_count[n]
+        alpha = {
+            k: self.prior_strength * self.prior[k] + cam.get(k, 0) + obs.get(k, 0)
+            for k in self.valid_numbers
+        }
         a0 = float(sum(alpha.values()))
         out = {}
         for k in self.valid_numbers:

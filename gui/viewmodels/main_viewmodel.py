@@ -543,6 +543,102 @@ class MainViewModel:
             ),
         }
 
+    def _usable_vision_observations(self, stopped_only=False, min_confidence=0.0):
+        """Filtered camera observations (read-only helper for the vision panel)."""
+        from vision.observation_log import load_observations
+        return [
+            o for o in load_observations()
+            if o["number"] in settings.VALID_NUMBERS
+            and (not stopped_only or o["stopped"])
+            and (o["confidence"] is None or o["confidence"] >= min_confidence)
+        ]
+
+    def get_vision_analysis(self, stopped_only=False, min_confidence=0.0) -> dict:
+        """Chi-square fairness of the PHYSICAL wheel vs its design layout, built
+        from camera observations. READ-ONLY: does not touch betting stats or the
+        wheel prior. Detects long-run physical bias if any; not a spin forecast."""
+        from collections import Counter
+        from core.wheel_bias import chi_square_gof, design_distribution, standardized_residual
+
+        usable = self._usable_vision_observations(stopped_only, min_confidence)
+        n = len(usable)
+        counts = Counter(o["number"] for o in usable)
+        design = design_distribution(settings.SPINWHEEL_SEQUENCE, settings.VALID_NUMBERS)
+        expected = {k: n * design[k] for k in settings.VALID_NUMBERS}
+        rows = [
+            {
+                "number": k,
+                "observed": counts.get(k, 0),
+                "expected": expected[k],
+                "share": design[k],
+                "resid": standardized_residual(counts.get(k, 0), expected[k]),
+            }
+            for k in settings.VALID_NUMBERS
+        ]
+        loaded = int(sum(self.bayesian_engine.observed_counts.values()))
+        if n == 0:
+            return {
+                "status": "empty", "n": 0, "rows": rows, "loaded_into_engine": loaded,
+                "message": ("Belum ada observasi kamera. Jalankan dulu: "
+                            "python scripts/wheel_cam.py --rounds 50"),
+            }
+        chi2, dof, p = chi_square_gof(counts, expected)
+        biased = (p < 0.05) and (n >= 30)
+        return {
+            "status": "biased" if biased else "fair", "n": n, "chi2": chi2,
+            "dof": dof, "p": p, "biased": biased, "rows": rows,
+            "loaded_into_engine": loaded,
+        }
+
+    def apply_vision_learning(self, stopped_only=False, min_confidence=0.0) -> dict:
+        """Write the vision report + models/wheel_prior.json from camera
+        observations, then RELOAD the Bayesian engine so the observed counts feed
+        its posterior immediately (no app restart needed). Betting stats are
+        untouched."""
+        import json
+        import os
+        from collections import Counter
+        from datetime import datetime, timezone
+        from core.wheel_bias import chi_square_gof, design_distribution
+        from scripts.learn_from_vision import build_report, REPORT_PATH, WHEEL_PRIOR_PATH
+
+        usable = self._usable_vision_observations(stopped_only, min_confidence)
+        n = len(usable)
+        if n == 0:
+            return {"status": "empty", "n": 0,
+                    "message": "Tidak ada observasi kamera untuk dipelajari."}
+        counts = Counter(o["number"] for o in usable)
+        design = design_distribution(settings.SPINWHEEL_SEQUENCE, settings.VALID_NUMBERS)
+        expected = {k: n * design[k] for k in settings.VALID_NUMBERS}
+        chi2, dof, p = chi_square_gof(counts, expected)
+        biased = (p < 0.05) and (n >= 30)
+
+        report, ts = build_report(
+            usable, counts, design, expected, chi2, dof, p, biased,
+            stopped_only, False, 30,
+        )
+        os.makedirs(os.path.dirname(REPORT_PATH), exist_ok=True)
+        with open(REPORT_PATH, "w", encoding="utf-8") as f:
+            f.write(report)
+        payload = {
+            "counts": {str(k): int(counts.get(k, 0)) for k in settings.VALID_NUMBERS},
+            "n_obs": n, "chi_square": round(chi2, 4), "dof": dof,
+            "p_value": round(p, 6), "biased": bool(biased),
+            "stopped_only": bool(stopped_only), "min_confidence": min_confidence,
+            "updated_at": ts,
+            "source": "vision camera observations (GUI panel)",
+        }
+        os.makedirs(os.path.dirname(WHEEL_PRIOR_PATH), exist_ok=True)
+        with open(WHEEL_PRIOR_PATH, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
+
+        # Engine picks up the new observations right away.
+        self.bayesian_engine.reload_observed_counts()
+        return {
+            "status": "ok", "n": n, "chi2": chi2, "dof": dof, "p": p,
+            "biased": biased, "report_path": REPORT_PATH, "prior_path": WHEEL_PRIOR_PATH,
+        }
+
     def get_tf_metrics(self) -> dict:
         if not self.lstm_engine.history_metrics['loss']:
             return {"loss": None, "accuracy": None}

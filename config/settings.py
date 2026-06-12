@@ -5,7 +5,7 @@ config/settings.py — Application configuration, constants, and UI themes.
 
 # Bumped whenever the prediction/betting/reporting logic changes. Stamped onto
 # every exported audit report so upgrades and audits are traceable.
-APP_VERSION = "1.28.1"
+APP_VERSION = "1.29.1"
 
 # ---------------------------------------------------------
 # Wheel Configuration

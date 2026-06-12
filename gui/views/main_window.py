@@ -65,6 +65,7 @@ class MainWindow(ctk.CTk):
         self._lab_window = None
         self._analytics_window = None
         self._bankroll_window = None
+        self._vision_window = None
         self.bind_all("<Control-Shift-L>", self._open_lab_mode)
         self.bind_all("<Control-Shift-l>", self._open_lab_mode)
 
@@ -507,6 +508,11 @@ class MainWindow(ctk.CTk):
             font=font(12, "bold"), fg_color=C["secondary"], hover_color=C["info"],
             text_color=C["background"],
         ).pack(side="right", padx=(0, 8))
+        ctk.CTkButton(
+            actions_f, text="VISION BIAS", command=self._open_vision_panel, width=140,
+            font=font(12, "bold"), fg_color=C["info"], hover_color=C["primary"],
+            text_color=C["background"],
+        ).pack(side="right", padx=(0, 8))
 
         # Statistical wheel-bias verdict (is the model beating chance?).
         self.bias_lbl = ctk.CTkLabel(
@@ -696,6 +702,196 @@ class MainWindow(ctk.CTk):
             text=("Kesimpulan: tidak ada angka yang 'wajib keluar'. Gunakan engine "
                   "berbasis bukti (AI-Optimal / Ensemble) untuk keputusan nyata."),
         ).pack(pady=(0, 14), padx=16, anchor="w")
+
+    def _open_vision_panel(self, event=None):
+        """VISION: chi-square fairness of the PHYSICAL wheel vs its design layout,
+        built from camera observations (scripts/wheel_cam.py).
+
+        This detects long-run PHYSICAL bias if one exists - it is NOT a forecast
+        of the next spin and creates no edge by itself. A fair wheel yields a
+        high p-value and the engine keeps SKIPping -EV bets. 'UPDATE PRIOR' folds
+        the observed counts into the Bayesian engine live (no restart).
+        """
+        try:
+            if self._vision_window is not None and self._vision_window.winfo_exists():
+                self._vision_window.lift()
+                return
+        except Exception:
+            self._vision_window = None
+
+        win = ctk.CTkToplevel(self)
+        self._vision_window = win
+        win.title("Vision - Uji Bias Roda dari Kamera")
+        win.geometry("860x780")
+        win.configure(fg_color=C["background"])
+
+        ctk.CTkLabel(
+            win, text="VISION - uji bias roda fisik (chi-square)",
+            font=font(16, "bold"), text_color=C["secondary"],
+        ).pack(pady=(14, 2), padx=16, anchor="w")
+        ctk.CTkLabel(
+            win, wraplength=820, justify="left", font=font(11), text_color=C["text_secondary"],
+            text=(
+                "Dari observasi kamera (scripts/wheel_cam.py). Menguji apakah roda "
+                "FISIK menyimpang dari layout desainnya. Ini mendeteksi bias jangka "
+                "panjang KALAU ada - BUKAN ramalan spin berikutnya, dan tidak "
+                "menciptakan edge. Roda adil -> p >= 0.05 dan engine tetap SKIP "
+                "taruhan -EV. Tombol UPDATE PRIOR memuat hitungan kamera ke engine "
+                "Bayesian secara langsung (tanpa restart)."
+            ),
+        ).pack(pady=(0, 8), padx=16, anchor="w")
+
+        opts = ctk.CTkFrame(win, fg_color="transparent")
+        opts.pack(fill="x", padx=16)
+        self._vision_stopped_cb = ctk.CTkCheckBox(
+            opts, text="Hanya spin yang benar-benar berhenti",
+            command=self._refresh_vision_panel, font=font(11),
+        )
+        self._vision_stopped_cb.pack(side="left")
+
+        self._vision_verdict = ctk.CTkLabel(
+            win, wraplength=820, justify="left", font=font(13, "bold"),
+            text_color=C["text"], text="",
+        )
+        self._vision_verdict.pack(pady=(8, 4), padx=16, anchor="w")
+
+        self._vision_chart_cell = ctk.CTkFrame(win, fg_color=C["card"], corner_radius=10)
+        self._vision_chart_cell.pack(fill="both", expand=True, padx=12, pady=(0, 6))
+
+        self._vision_box = ctk.CTkTextbox(
+            win, height=190, font=("Courier New", 11),
+            fg_color=C["card"], text_color=C["text"],
+        )
+        self._vision_box.pack(fill="x", padx=12, pady=(0, 6))
+
+        btns = ctk.CTkFrame(win, fg_color="transparent")
+        btns.pack(fill="x", padx=12, pady=(0, 14))
+        ctk.CTkButton(
+            btns, text="MUAT ULANG", command=self._refresh_vision_panel, width=140,
+            font=font(12, "bold"), fg_color=C["card"], hover_color=C["info"],
+            text_color=C["text"],
+        ).pack(side="left")
+        ctk.CTkButton(
+            btns, text="UPDATE PRIOR SISTEM", command=self._on_apply_vision, width=220,
+            font=font(12, "bold"), fg_color=C["secondary"], hover_color=C["info"],
+            text_color=C["background"],
+        ).pack(side="right")
+
+        self._vision_canvas = None
+        self._refresh_vision_panel()
+
+    def _refresh_vision_panel(self):
+        """Recompute the chi-square analysis and redraw the chart + table."""
+        if self._vision_window is None or not self._vision_window.winfo_exists():
+            return
+        try:
+            stopped = bool(self._vision_stopped_cb.get())
+        except Exception:
+            stopped = False
+        data = self.vm.get_vision_analysis(stopped_only=stopped)
+
+        if data["status"] == "empty":
+            self._vision_verdict.configure(
+                text=data["message"], text_color=C["text_secondary"],
+            )
+        elif data["biased"]:
+            self._vision_verdict.configure(
+                text=(
+                    f"RODA MENYIMPANG dari desain (p={data['p']:.4f} < 0.05) atas "
+                    f"{data['n']} spin. chi2={data['chi2']:.2f}, dof={data['dof']}. "
+                    f"Cek angka ber-[!] di tabel."
+                ),
+                text_color=C["error"],
+            )
+        else:
+            self._vision_verdict.configure(
+                text=(
+                    f"Tidak ada bias signifikan (p={data['p']:.4f} >= 0.05) atas "
+                    f"{data['n']} spin. chi2={data['chi2']:.2f}, dof={data['dof']}. "
+                    f"Roda sesuai desain."
+                ),
+                text_color=C["primary"],
+            )
+
+        lines = [f"{'Angka':>6} {'Teramati':>9} {'Harapan':>9} {'Porsi':>7} {'Residu':>8}"]
+        lines.append("-" * 46)
+        for r in data["rows"]:
+            flag = "  [!]" if abs(r["resid"]) > 2 else ""
+            lines.append(
+                f"{r['number']:>6} {r['observed']:>9} {r['expected']:>9.1f} "
+                f"{r['share']*100:>6.1f}% {r['resid']:>+8.2f}{flag}"
+            )
+        loaded = data.get("loaded_into_engine") or 0
+        lines.append("")
+        lines.append(
+            f"Sudah dimuat ke engine Bayesian: {loaded} observasi."
+            if loaded else
+            "Belum ada observasi yang dimuat ke engine (klik UPDATE PRIOR SISTEM)."
+        )
+        self._vision_box.configure(state="normal")
+        self._vision_box.delete("1.0", "end")
+        self._vision_box.insert("1.0", "\n".join(lines))
+        self._vision_box.configure(state="disabled")
+
+        for w in self._vision_chart_cell.winfo_children():
+            w.destroy()
+        if data["status"] != "empty":
+            nums = [r["number"] for r in data["rows"]]
+            n = max(1, data["n"])
+            obs_pct = [r["observed"] / n * 100 for r in data["rows"]]
+            des_pct = [r["share"] * 100 for r in data["rows"]]
+            fig = Figure(figsize=(7.4, 3.4), dpi=100, facecolor=C["card"])
+            ax = fig.add_subplot(111)
+            ax.set_facecolor(C["card"])
+            x = list(range(len(nums)))
+            ax.bar([i - 0.2 for i in x], obs_pct, width=0.4,
+                   label="Teramati (kamera)", color=C["info"])
+            ax.bar([i + 0.2 for i in x], des_pct, width=0.4,
+                   label="Desain", color=C["primary"])
+            ax.set_xticks(x)
+            ax.set_xticklabels([str(k) for k in nums])
+            ax.set_ylabel("Probabilitas (%)", color=C["text"])
+            ax.set_title("Frekuensi teramati vs porsi desain", color=C["text"])
+            ax.tick_params(colors=C["text"])
+            for spine in ax.spines.values():
+                spine.set_color(C["text_secondary"])
+            leg = ax.legend(facecolor=C["panel"], edgecolor=C["text_secondary"])
+            for txt in leg.get_texts():
+                txt.set_color(C["text"])
+            fig.tight_layout()
+            canvas = FigureCanvasTkAgg(fig, master=self._vision_chart_cell)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill="both", expand=True, padx=6, pady=6)
+            self._vision_canvas = canvas
+
+    def _on_apply_vision(self):
+        """Write the report + wheel_prior.json and reload the Bayesian engine."""
+        try:
+            stopped = bool(self._vision_stopped_cb.get())
+        except Exception:
+            stopped = False
+        try:
+            res = self.vm.apply_vision_learning(stopped_only=stopped)
+        except Exception as exc:
+            messagebox.showerror("Vision", f"Gagal memproses observasi:\n{exc}")
+            return
+        if res["status"] == "empty":
+            messagebox.showwarning(
+                "Vision",
+                "Belum ada observasi kamera untuk dipelajari.\n"
+                "Jalankan dulu: python scripts/wheel_cam.py --rounds 50",
+            )
+            return
+        verd = "BIAS terdeteksi (p<0.05)" if res["biased"] else "tidak ada bias signifikan"
+        messagebox.showinfo(
+            "Vision",
+            f"Prior sistem di-update dari {res['n']} observasi.\n"
+            f"chi2={res['chi2']:.2f} (dof {res['dof']}), p={res['p']:.4f} -> {verd}.\n\n"
+            "Engine Bayesian sudah memuat ulang observasi (langsung aktif, "
+            "tanpa restart).\n"
+            f"Report: {res['report_path']}",
+        )
+        self._refresh_vision_panel()
 
     def _open_analytics_panel(self, event=None):
         """PROMPT 13: deep-analytics window with the four audit charts (2x2).

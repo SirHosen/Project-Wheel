@@ -15,6 +15,7 @@ models/*.h5
 models/continuous_state.json
 models/calibration_state.json
 models/risk_state.json
+models/wheel_prior.json
 
 # --- Local databases & JSON migration mirrors ---
 data/*.db

@@ -1,3 +1,72 @@
+# v1.29.1 - Panel Vision di GUI: lihat & terapkan bias kamera dari dalam app
+
+Loop pembelajaran kamera v1.29.0 sekarang punya wajah di aplikasi. Nggak perlu
+lagi buka terminal buat baca report -- tombol baru **VISION BIAS** di baris aksi
+membuka panel yang menampilkan hasil uji chi-square langsung dari observasi
+kamera, plus tombol untuk melipatnya ke engine tanpa restart. FRAMING TETAP
+JUJUR: panel ini mendeteksi bias FISIK jangka panjang kalau memang ADA; ini
+BUKAN ramalan spin berikutnya dan tidak menciptakan edge. Roda adil => p >= 0.05
+dan engine tetap SKIP taruhan -EV.
+
+1. **Tombol `VISION BIAS` (`gui/views/main_window.py`).** Membuka panel
+   `_open_vision_panel`: label verdict berwarna (hijau = sesuai desain, merah =
+   menyimpang) dengan chi2/dof/p dan jumlah spin, grafik batang **frekuensi
+   teramati vs porsi desain** per angka, dan tabel monospace (teramati, harapan,
+   porsi, residu baku; angka ber-`[!]` = |residu| > 2). Checkbox "hanya spin
+   yang benar-benar berhenti" memfilter ulang secara live.
+2. **Tombol `UPDATE PRIOR SISTEM`.** Menulis `reports/vision_learning_report.md`
+   + `models/wheel_prior.json` lalu memanggil `reload_observed_counts()` pada
+   engine Bayesian -- observasi kamera langsung aktif TANPA restart aplikasi.
+   Konfirmasi via dialog (n, chi2, p, verdict, lokasi report).
+3. **`gui/viewmodels/main_viewmodel.py`.** Method baru `get_vision_analysis()`
+   (read-only; chi-square + residu, tidak menyentuh statistik taruhan) dan
+   `apply_vision_learning()` (tulis report + prior, reload engine), berbagi
+   helper filter `_usable_vision_observations()`. Memakai ulang `build_report`
+   dari `scripts/learn_from_vision.py` supaya isi report identik dengan jalur CLI.
+4. **Tanpa perubahan perilaku engine atau matematika.** Murni lapisan UI di atas
+   inti v1.29.0; pemisahan data kamera vs `data/history.json` tetap dijaga, dan
+   `models/wheel_prior.json` tetap state lokal (gitignored, tidak ikut paket).
+
+---
+
+# v1.29.0 - Vision learning loop: kamera jadi alat pembelajaran bias
+
+Kamera sekarang BELAJAR, bukan cuma mengintip. Tiap spin yang diamati dicatat,
+diuji secara statistik (chi-square) terhadap layout desain roda, lalu hasilnya
+dilipat balik ke otak Bayesian sebagai evidence nyata -- tanpa mengotori
+statistik win-rate taruhan. FRAMING TETAP JUJUR: ini mendeteksi bias fisik
+jangka panjang kalau memang ADA; ini BUKAN ramalan spin berikutnya. Roda adil
+= engine tetap SKIP taruhan -EV.
+
+1. **Tangkap (`scripts/wheel_cam.py`).** Tiap observasi (sudut, segmen, angka,
+   confidence, stopped) di-append ke `reports/vision_observations.csv`. Mode
+   baru `--rounds N` mengamati N spin berturut-turut (tekan Enter antar spin);
+   `--no-log` untuk sekadar mengintip tanpa mencatat.
+2. **Pelajari (`scripts/learn_from_vision.py`, baru).** Membaca log lalu
+   menjalankan uji **chi-square goodness-of-fit** terhadap porsi segmen desain
+   (p-value dihitung pure-Python via regularized incomplete gamma -- tanpa
+   scipy), plus residu baku per angka. Menulis `reports/vision_learning_report.md`
+   (verdict + tabel frekuensi) dan `models/wheel_prior.json` (observed counts +
+   statistik). Flag: `--no-update`, `--stopped-only`, `--min-confidence`,
+   `--min-spins`.
+3. **Upgrade (`predictors/bayesian_optimal.py`).** Saat start, engine membaca
+   `models/wheel_prior.json` dan melipat observed counts kamera ke posterior
+   Dirichlet sebagai spin NYATA tambahan (`alpha = strength*prior + cam + bet`).
+   Support `n` ikut menghitung observasi kamera. File hilang/rusak => perilaku
+   identik dengan sebelumnya (graceful fallback). Param baru `wheel_prior_path`
+   untuk testability; method `reload_observed_counts()`.
+4. **`core/wheel_bias.py` (baru).** Statistik murni & testable: `gammq`
+   (survival chi-square), `design_distribution`, `chi_square_gof`,
+   `standardized_residual`.
+5. **Pemisahan data dijaga.** Observasi kamera TIDAK masuk `data/history.json`
+   dan TIDAK mengubah win-rate. `models/wheel_prior.json` di-gitignore (state
+   lokal); hapus untuk kembali ke prior layout desain murni.
+6. **Tes baru `tests/test_vision_learning.py`** (5 tes): survival chi-square,
+   fair vs biased, round-trip log observasi, posterior melipat observed counts,
+   graceful tanpa file. Dok: `vision/README.md`.
+
+---
+
 # v1.28.1 - Audit V4 fixes: regresi path + migrasi statistik jujur
 
 Menindaklanjuti audit eksternal ke-4 (V4) yang memverifikasi v1.28.0 di level

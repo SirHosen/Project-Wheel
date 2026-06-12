@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import os
 import threading
 from typing import Callable, Optional
 
@@ -13,6 +14,7 @@ from core.betting import net_kelly_portfolio
 from core.bootstrap_ci import attach_confidence_intervals
 from core.continuous_engine import ContinuousLearningEngine
 from core.tilt import TiltDetector
+from core.calibration import ReliabilityTracker
 
 class MainViewModel:
     """
@@ -29,6 +31,15 @@ class MainViewModel:
         # EV engine. Best single predictor for an i.i.d. wheel; only bets when a
         # real, robust edge exists, otherwise recommends SKIP.
         self.bayesian_engine = BayesianOptimalEngine()
+        # Probability-reliability tracker (audit V5 #2): records (confidence,
+        # was_correct) for the engine's #1 pick every confirmed round, persisting
+        # to models/calibration_state.json. Lets the UI show how honest each
+        # engine's confidence is (Brier / log-loss / ECE / reliability bins) and
+        # can isotonically RE-MAP raw confidence onto observed hit-rates.
+        _root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        self.calibration = ReliabilityTracker(
+            path=os.path.join(_root, "models", "calibration_state.json")
+        )
         self.wheel_math = WheelMath(settings.SPINWHEEL_SEQUENCE, settings.VALID_NUMBERS)
         # Unified continuous-learning brain: fuses physics + bayes + markov +
         # the GPU LSTM and learns each one's trust weight from every spin.
@@ -173,6 +184,22 @@ class MainViewModel:
                     self.continuous.observe(actual, history_before)
                 except Exception:
                     import logging; logging.exception("continuous.observe failed")
+
+                # Calibration (audit V5 #2): grade the engine's TOP-1 pick's
+                # stated confidence against the actual outcome, then persist.
+                # This is what finally makes models/calibration_state.json real
+                # and feeds the KALIBRASI panel + isotonic confidence re-map.
+                try:
+                    picks = snap or []
+                    if picks:
+                        top = max(picks, key=lambda b: (b.get("confidence") or 0.0))
+                        conf = float(top.get("confidence") or 0.0)
+                        was_correct = (top.get("number") == actual)
+                        self.calibration.record(conf, was_correct, engine=eng)
+                        self.calibration.fit_isotonic(eng)
+                        self.calibration.save()
+                except Exception:
+                    import logging; logging.exception("calibration.record failed")
 
                 # 3. Incremental Train TF (GPU stays warm) + periodic persist.
                 history = self.tracker.get_recent_actuals(100)
@@ -328,6 +355,19 @@ class MainViewModel:
                 if a.get("support") is None:
                     a["support"] = ci[2]
 
+        # Attach isotonically-calibrated confidence for DISPLAY only (audit V5
+        # #2). Sizing/EV still use the raw confidence above; this extra field
+        # lets the UI show "what this stated confidence has historically meant".
+        # calibrate() returns the input unchanged until enough data is recorded,
+        # so this is a safe no-op early on.
+        try:
+            for a in allocs:
+                a["confidence_calibrated"] = self.calibration.calibrate(
+                    a.get("confidence", 0.0), self.selected_engine
+                )
+        except Exception:
+            import logging; logging.exception("confidence calibration map failed")
+
         self.current_predictions = allocs
         return allocs
 
@@ -482,6 +522,27 @@ class MainViewModel:
 
     def get_stats(self) -> dict:
         return self.tracker.get_stats()
+
+    def get_calibration_report(self, engine=None) -> dict:
+        """Confidence-reliability summary for the KALIBRASI panel (audit V5 #2).
+
+        Returns Brier score, log-loss, Expected Calibration Error (ECE) and the
+        reliability bins (mean predicted confidence vs observed hit-rate) for
+        BOTH the active engine and the global pool. Read-only; does not touch
+        betting stats. On a fair wheel, honest confidence hugs the diagonal and
+        ECE stays small; a large ECE means the engine is over/under-confident.
+        """
+        eng = engine or self.selected_engine
+        empty = {"n": 0, "brier": None, "log_loss": None, "ece": None, "bins": []}
+        try:
+            return {
+                "engine": eng,
+                "global": self.calibration.summary(None),
+                "per_engine": self.calibration.summary(eng),
+            }
+        except Exception:
+            import logging; logging.exception("calibration report failed")
+            return {"engine": eng, "global": dict(empty), "per_engine": dict(empty)}
 
     def get_advanced_stats(self) -> dict:
         return self.tracker.get_advanced_stats()

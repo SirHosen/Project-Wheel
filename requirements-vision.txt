@@ -10,3 +10,6 @@
 
 opencv-python>=4.8
 numpy>=1.24
+# Screen-capture mode (`--source screen`): tangkap roda langsung dari layar.
+# Hanya perlu kalau pakai mode layar; webcam/file video tidak membutuhkannya.
+mss>=9.0

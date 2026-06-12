@@ -13,9 +13,11 @@ Aturan jujur:
   * is_win  -> True HANYA jika ada stake nyata (token_bet > 0) pada angka yang
                keluar. Ronde tanpa snapshot taruhan (log tebakan lama) BUKAN
                kemenangan taruhan.
-  * top1_hit -> di-backfill = (predicted_number == actual_number), yaitu akurasi
-               tebakan teratas yang lepas dari staking, sehingga kualitas
-               tebakan historis tetap terekam di metrik "Akurasi tebakan teratas".
+  * top1_hit -> TIDAK di-backfill untuk ronde lama. predicted_number lama hanya
+               tersimpan saat tebakan benar (definisi menang lama), jadi backfill
+               = (predicted == actual) bikin "Akurasi tebakan teratas" palsu
+               ~100% (bias seleksi). Ronde lama ditandai legacy & TIDAK dinilai;
+               metrik top-1 mulai bersih dari ronde baru (audit V5 #1).
 
 Aman dijalankan berulang (idempoten). Jalankan dari ROOT project:
     python scripts/migrate_stats.py
@@ -61,10 +63,16 @@ def main():
             regraded += 1
         rec["is_win"] = new_win
 
-        pred = rec.get("predicted_number")
-        if "top1_hit" not in rec and pred is not None:
-            rec["top1_hit"] = (pred == rec.get("actual_number"))
-            backfilled += 1
+        # Audit V5 #1: do NOT backfill top1_hit from (predicted == actual).
+        # Legacy rounds stored predicted_number ONLY when the guess was right
+        # (old win definition), so backfilling yields a selection-biased ~100%
+        # top-1 accuracy. Instead strip any previously-backfilled grade and mark
+        # the round legacy/un-evaluated so the honest LIVE metric starts clean.
+        if not rec.get("top1_graded_live"):
+            if "top1_hit" in rec:
+                rec.pop("top1_hit", None)
+                backfilled += 1
+            rec["top1_legacy_unevaluated"] = True
 
     wins = sum(1 for r in history if r.get("is_win"))
     losses = len(history) - wins
@@ -75,15 +83,15 @@ def main():
 
     t.save_data()
 
-    top1_graded = sum(1 for r in history if "top1_hit" in r)
-    top1_hits = sum(1 for r in history if r.get("top1_hit"))
+    top1_graded = sum(1 for r in history if r.get("top1_graded_live"))
+    top1_hits = sum(1 for r in history if r.get("top1_graded_live") and r.get("top1_hit"))
     wr = (wins / len(history) * 100) if history else 0.0
     t1 = (top1_hits / top1_graded * 100) if top1_graded else 0.0
 
     print("=== migrate_stats (audit V4 #3) ===")
     print(f"records              : {len(history)}")
     print(f"is_win regraded      : {regraded}")
-    print(f"top1_hit backfilled  : {backfilled}")
+    print(f"top1 legacy cleaned  : {backfilled}")
     print(f"BEFORE  wins/losses  : {before['wins']}/{before['losses']} (total {before['total']}, top1_graded {before['top1_graded']})")
     print(f"AFTER   wins/losses  : {wins}/{losses} (total {len(history)}, top1_graded {top1_graded})")
     print(f"WIN RATE (taruhan)   : {wr:.1f}%")

@@ -94,7 +94,11 @@ def p_support(predictions, num):
 
 
 def should_skip_round(skip_rate=None, rng=None):
-    """Randomly skip a fraction of rounds (capital preservation)."""
+    """Randomly skip a fraction of rounds (capital preservation).
+
+    BACKTEST-ONLY helper: used by ``simulate()`` and the test suite. NOT wired
+    into the live betting path (audit V5 #3).
+    """
     rate = float(skip_rate if skip_rate is not None
                  else _cfg("HARVEST_SKIP_RATE", 0.20))
     r = rng.random() if rng is not None else random.random()
@@ -106,6 +110,9 @@ def round_profit(picks, actual_number):
 
     A pick wins net (token_bet * multiplier) if its number hits, else it loses
     its token_bet. Exactly one number wins per spin.
+
+    BACKTEST-ONLY helper: used by ``simulate()`` and the test suite. NOT wired
+    into the live betting path (audit V5 #3).
     """
     total = 0
     for b in picks:
@@ -142,6 +149,10 @@ def simulate(actuals, confidence_map, starting_capital=1000,
     Returns a dict: final_capital, profit, n_rounds, n_harvest_rounds,
     n_skipped, n_wins, win_rate, big_wins (multiplier>=10 hits), max_drawdown,
     sharpe.
+
+    BACKTEST-ONLY: this simulator and its helpers (should_skip_round,
+    round_profit) are for offline analysis + tests. The LIVE harvest path uses
+    harvest_picks()/p_support(); it never calls simulate() (audit V5 #3).
     """
     rng = random.Random(seed)
     skip_rate = overrides.get("skip_rate", _cfg("HARVEST_SKIP_RATE", 0.20))

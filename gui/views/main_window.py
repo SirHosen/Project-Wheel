@@ -66,6 +66,7 @@ class MainWindow(ctk.CTk):
         self._analytics_window = None
         self._bankroll_window = None
         self._vision_window = None
+        self._calibration_window = None
         self.bind_all("<Control-Shift-L>", self._open_lab_mode)
         self.bind_all("<Control-Shift-l>", self._open_lab_mode)
 
@@ -513,6 +514,11 @@ class MainWindow(ctk.CTk):
             font=font(12, "bold"), fg_color=C["info"], hover_color=C["primary"],
             text_color=C["background"],
         ).pack(side="right", padx=(0, 8))
+        ctk.CTkButton(
+            actions_f, text="KALIBRASI", command=self._open_calibration_panel, width=130,
+            font=font(12, "bold"), fg_color=C["card"], hover_color=C["info"],
+            text_color=C["text"],
+        ).pack(side="right", padx=(0, 8))
 
         # Statistical wheel-bias verdict (is the model beating chance?).
         self.bias_lbl = ctk.CTkLabel(
@@ -892,6 +898,129 @@ class MainWindow(ctk.CTk):
             f"Report: {res['report_path']}",
         )
         self._refresh_vision_panel()
+
+    def _open_calibration_panel(self, event=None):
+        """KALIBRASI: how honest is each engine's stated confidence? (audit V5 #2)
+
+        Shows Brier score, log-loss and Expected Calibration Error (ECE) plus a
+        reliability table (predicted confidence vs the hit-rate ACTUALLY
+        observed for that band). A perfectly-honest model hugs the diagonal.
+        Read-only diagnostic: it does NOT change bets and cannot beat a fair
+        wheel; it just exposes over/under-confidence.
+        """
+        try:
+            if self._calibration_window is not None and self._calibration_window.winfo_exists():
+                self._calibration_window.lift()
+                return
+        except Exception:
+            self._calibration_window = None
+
+        win = ctk.CTkToplevel(self)
+        self._calibration_window = win
+        win.title("Kalibrasi - Seberapa Jujur Confidence Engine")
+        win.geometry("760x620")
+        win.configure(fg_color=C["background"])
+
+        ctk.CTkLabel(
+            win, text="KALIBRASI - reliability confidence engine",
+            font=font(16, "bold"), text_color=C["secondary"],
+        ).pack(pady=(14, 2), padx=16, anchor="w")
+        ctk.CTkLabel(
+            win, wraplength=720, justify="left", font=font(11), text_color=C["text_secondary"],
+            text=(
+                "Tiap ronde, pick #1 engine + confidence-nya dicatat vs hasil "
+                "nyata. Brier & log-loss makin kecil makin baik; ECE = rata-rata "
+                "selisih antara confidence yang DIKLAIM dan hit-rate yang BENAR "
+                "terjadi (0 = sempurna jujur). Ini diagnosa kejujuran, BUKAN edge "
+                "- roda adil tetap tidak bisa ditebak."
+            ),
+        ).pack(pady=(0, 8), padx=16, anchor="w")
+
+        self._calib_verdict = ctk.CTkLabel(
+            win, wraplength=720, justify="left", font=font(13, "bold"),
+            text_color=C["text"], text="",
+        )
+        self._calib_verdict.pack(pady=(6, 4), padx=16, anchor="w")
+
+        self._calib_box = ctk.CTkTextbox(
+            win, height=360, font=("Courier New", 11),
+            fg_color=C["card"], text_color=C["text"],
+        )
+        self._calib_box.pack(fill="both", expand=True, padx=12, pady=(0, 6))
+
+        ctk.CTkButton(
+            win, text="MUAT ULANG", command=self._refresh_calibration_panel, width=140,
+            font=font(12, "bold"), fg_color=C["card"], hover_color=C["info"],
+            text_color=C["text"],
+        ).pack(pady=(0, 14))
+
+        self._refresh_calibration_panel()
+
+    def _refresh_calibration_panel(self):
+        """Recompute + redraw the calibration summary for the active engine."""
+        if self._calibration_window is None or not self._calibration_window.winfo_exists():
+            return
+        try:
+            rep = self.vm.get_calibration_report()
+        except Exception:
+            return
+        eng = rep.get("engine", "?")
+        per = rep.get("per_engine", {}) or {}
+        glob = rep.get("global", {}) or {}
+
+        def _fmt(x, pct=False):
+            if x is None:
+                return "-"
+            return f"{x*100:.1f}%" if pct else f"{x:.4f}"
+
+        n = per.get("n", 0) or 0
+        ece = per.get("ece")
+        if n < 10:
+            self._calib_verdict.configure(
+                text=(f"Engine '{eng}': baru {n} ronde tercatat - kumpulkan >=10 "
+                      "ronde untuk verdict kalibrasi yang berarti."),
+                text_color=C["text_secondary"],
+            )
+        elif ece is not None and ece <= 0.10:
+            self._calib_verdict.configure(
+                text=(f"Engine '{eng}': confidence cukup JUJUR (ECE={ece*100:.1f}% "
+                      f"<= 10%) atas {n} ronde."),
+                text_color=C["primary"],
+            )
+        else:
+            self._calib_verdict.configure(
+                text=(f"Engine '{eng}': confidence kurang terkalibrasi "
+                      f"(ECE={_fmt(ece, True)}) atas {n} ronde - hati-hati percaya "
+                      "angka confidence mentah."),
+                text_color=C["error"],
+            )
+
+        lines = [f"Engine aktif : {eng}"]
+        lines.append(
+            f"  n={n}   Brier={_fmt(per.get('brier'))}   "
+            f"LogLoss={_fmt(per.get('log_loss'))}   ECE={_fmt(ece, True)}"
+        )
+        lines.append(
+            f"Global (semua engine): n={glob.get('n', 0)}   "
+            f"Brier={_fmt(glob.get('brier'))}   ECE={_fmt(glob.get('ece'), True)}"
+        )
+        lines.append("")
+        lines.append(f"{'Confidence':>11} {'Teramati':>9} {'n':>5}")
+        lines.append("-" * 30)
+        bins = per.get("bins") or []
+        if not bins:
+            lines.append("  (belum ada data bin untuk engine ini)")
+        for b in bins:
+            lines.append(
+                f"{b['mean_predicted']*100:>10.1f}% {b['observed_acc']*100:>8.1f}% "
+                f"{b['n']:>5}"
+            )
+        lines.append("")
+        lines.append("Idealnya kolom 'Teramati' ~= 'Confidence' (model jujur).")
+        self._calib_box.configure(state="normal")
+        self._calib_box.delete("1.0", "end")
+        self._calib_box.insert("1.0", "\n".join(lines))
+        self._calib_box.configure(state="disabled")
 
     def _open_analytics_panel(self, event=None):
         """PROMPT 13: deep-analytics window with the four audit charts (2x2).

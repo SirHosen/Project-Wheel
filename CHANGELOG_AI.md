@@ -1,3 +1,70 @@
+# v1.30.0 - Kalibrasi confidence + akurasi top-1 yang JUJUR
+
+Tiga temuan audit V5 dibereskan, semua soal KEJUJURAN metrik (bukan nambah
+"kepintaran" - roda adil tetap nggak bisa ditebak).
+
+## 1. core/calibration.py akhirnya BENERAN dipakai (dulu orphan)
+`ReliabilityTracker` sebelumnya cuma di-test, nggak pernah jalan di app dan
+`models/calibration_state.json` nggak pernah kebuat. Sekarang:
+- ViewModel menginstansiasi `ReliabilityTracker` (path absolut ke
+  `models/calibration_state.json`).
+- Tiap ronde confirm: confidence pick #1 engine dicatat vs hasil nyata
+  (`record` -> `fit_isotonic` -> `save`). File state-nya jadi nyata.
+- Tombol baru **KALIBRASI** di GUI: nampilin Brier, log-loss, ECE, dan tabel
+  reliability (confidence yang DIKLAIM vs hit-rate yang BENAR terjadi) per
+  engine + global. Read-only, nggak ngubah taruhan.
+- Tiap prediksi sekarang bawa `confidence_calibrated` (isotonic remap) untuk
+  DISPLAY; sizing/EV tetap pakai confidence mentah - perilaku taruhan tak
+  berubah. Aman no-op sampai data cukup.
+
+## 2. Akurasi top-1 nggak lagi menyesatkan (dulu "100%" palsu)
+Data lama nyimpen `predicted_number` HANYA pas menang, lalu `migrate_stats`
+mem-backfill `top1_hit = (predicted == actual)` -> 40/40 True = bias seleksi.
+- `record_result` sekarang menandai `top1_graded_live=True` untuk tiap ronde
+  yang dinilai LIVE (menang ATAU kalah).
+- `get_stats` cuma menghitung top-1 dari ronde `top1_graded_live`. Ronde lama
+  yang bias diabaikan -> dashboard nampilin "-" sampai ada data jujur.
+- `migrate_stats.py` BERHENTI mem-backfill; ronde lama ditandai
+  `top1_legacy_unevaluated` dan grade biasnya dibuang.
+
+## 3. Kosmetik
+- `current_capital` di history.json di-reset 10 -> 1000 (sisa eksperimen lama).
+- `core/harvest.py` `simulate`/`should_skip_round`/`round_profit` ditandai
+  jelas **BACKTEST-ONLY** (bukan jalur taruhan live).
+- Test baru `tests/test_calibration_wiring.py` (PAVA fallback, headless).
+
+---
+
+# v1.29.2 - Mode LAYAR: amati roda langsung dari layar (tanpa webcam)
+
+Webcam USB nggak kebaca di WSL2, dan lagipula banyak roda itu DIGITAL (game
+online, video, animasi). Jadi sekarang `wheel_cam.py` bisa "merekam layar":
+tangkap sepetak layar lalu proses lewat pipeline angle-detection yang SAMA
+(HSV marker -> sudut -> segmen -> angka). FRAMING TETAP JUJUR: ini MENGAMATI
+roda, bukan meramal spin berikutnya; tetap butuh marker warna yang ikut
+berputar di dalam region.
+
+1. **`vision/screen.py` (baru).** `ScreenWheelTracker` menggrab frame via `mss`
+   dan memakai ulang `frame_marker_angle` / `detect_wheel_center` / `AngleTracker`
+   dari `vision/camera.py` -- nol duplikasi matematika. Import-safe: kalau `mss`
+   atau `cv2` absen, `mss_available()` / `is_available()` melaporkan dan `run()`
+   melempar RuntimeError ramah (bukan crash). Plus parser stdlib yang fully
+   unit-tested: `parse_region`, `parse_center`, `parse_hsv`.
+2. **`scripts/wheel_cam.py`.** Flag baru: `--source screen` mengaktifkan mode
+   layar; `--region x,y,w,h` (kosong = seluruh `--monitor N`), `--hsv` (warna
+   marker, dukung beberapa rentang via ';'), `--center x,y`, `--throttle`, dan
+   `--list-monitors` (cetak geometri monitor lalu keluar). `--hsv`/`--center`
+   kini juga berlaku untuk mode kamera/video. Argumen salah -> pesan ramah,
+   exit code 2.
+3. **`requirements-vision.txt`.** Tambah `mss>=9.0` (hanya untuk mode layar;
+   webcam/file video tidak membutuhkannya).
+4. **`tests/test_screen_tracker.py` (baru).** Menguji parser region/center/HSV
+   (valid + invalid) tanpa perlu mss/cv2. Suite jadi 28 file.
+5. **Tanpa perubahan matematika/engine.** Murni jalur input baru ke loop
+   observasi yang sama; CSV, report, prior, dan pemisahan data tetap identik.
+
+---
+
 # v1.29.1 - Panel Vision di GUI: lihat & terapkan bias kamera dari dalam app
 
 Loop pembelajaran kamera v1.29.0 sekarang punya wajah di aplikasi. Nggak perlu

@@ -133,6 +133,11 @@ class Tracker:
         # (audit V3 #1). None for legacy calls that don't supply it.
         if top1_hit is not None:
             record["top1_hit"] = bool(top1_hit)
+            # Mark as an HONEST, live-captured top-1 grade: recorded EVERY round
+            # (win OR loss) at spin time. Only these count toward top-1 accuracy,
+            # so legacy/backfilled grades (stored ONLY on wins -> selection bias)
+            # can never inflate it to a fake ~100% (audit V5 #1).
+            record["top1_graded_live"] = True
         self.data["history"].append(record)
 
         # Incremental O(1) durable write (audit V3 #3): append a single row to
@@ -231,7 +236,11 @@ class Tracker:
         # pick matched the result, INDEPENDENT of staking. Distinct from the
         # betting win rate above; only graded over rounds that recorded it.
         history = self.data.get("history", [])
-        graded = [r for r in history if r.get("top1_hit") is not None]
+        # Only grade rounds captured LIVE (top1_graded_live). Legacy rounds were
+        # recorded under the old win-only rule, so their backfilled top1_hit is
+        # selection-biased (stored only on wins -> a fake ~100%). Excluding them
+        # keeps this metric honest: it starts clean and fills from new rounds.
+        graded = [r for r in history if r.get("top1_graded_live")]
         top1_acc = (sum(1 for r in graded if r.get("top1_hit")) / len(graded) * 100) if graded else None
         return {
             "capital": self.data["current_capital"],

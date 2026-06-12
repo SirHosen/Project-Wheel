@@ -1,3 +1,29 @@
+# v1.30.1 - Fix: peta kalibrasi isotonic kini PER-ENGINE (bug audit V5)
+
+Audit V5 nemu 1 bug nyata (halus, dampak DISPLAY-only) di fitur KALIBRASI baru:
+`fit_isotonic` nyimpen kurva remap di SATU atribut global (`self._iso`), jadi
+tiap ronde ketimpa sama engine yang terakhir di-confirm. Akibatnya
+`calibrate(p, engine=...)` mengabaikan argumen `engine` dan bisa balikin kurva
+engine yang salah di angka `confidence_calibrated` yang ditampilkan.
+
+Yang diperbaiki di `core/calibration.py`:
+- Kurva isotonic sekarang disimpan PER ENGINE: `self._iso_by_engine` /
+  `self._sklearn_by_engine` (key `None` = pool global).
+- `fit_isotonic(engine)` nulis ke key engine itu (gak lagi nimpa global).
+- `calibrate(p, engine)` lookup kurva engine yang diminta, fallback ke global.
+- `save()`/`load()` nyimpen & muat ulang peta per-engine (key global pakai
+  sentinel `"__global__"`); tetap kompatibel baca state lama (`isotonic`).
+- Catatan: model scikit-learn tetap TIDAK di-serialize (re-fit otomatis tiap
+  ronde berikutnya). Di env-mu tanpa sklearn ini nggak kerasa.
+- Test baru `test_isotonic_is_per_engine` membuktikan kurva A & B nggak lagi
+  saling tabrakan + round-trip save/load.
+
+Dampak: HANYA angka tampilan `confidence_calibrated`. Taruhan, EV, sizing, dan
+metrik Brier/ECE di panel KALIBRASI sudah benar sejak 1.30.0 (per-engine via
+`_pick`), jadi tidak berubah.
+
+---
+
 # v1.30.0 - Kalibrasi confidence + akurasi top-1 yang JUJUR
 
 Tiga temuan audit V5 dibereskan, semua soal KEJUJURAN metrik (bukan nambah

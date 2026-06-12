@@ -123,10 +123,40 @@ def test_legacy_backfilled_top1_is_ignored():
         print("  legacy biased top1_hit correctly ignored OK")
 
 
+def test_isotonic_is_per_engine():
+    # Audit V5 regression: fit_isotonic was overwriting a SINGLE global map, so
+    # the engine confirmed last clobbered everyone else and calibrate(engine=)
+    # ignored its argument. Now maps are stored per engine.
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "calibration_state.json")
+        rt = ReliabilityTracker(path=path)
+        # Engine A: UNDER-confident (says 0.2 but is always right -> map up).
+        for _ in range(60):
+            rt.record(0.2, True, engine="A")
+        # Engine B: OVER-confident (says 0.8 but is always wrong -> map down).
+        for _ in range(60):
+            rt.record(0.8, False, engine="B")
+        # Fit A THEN B. With the old single-global map, B would clobber A.
+        rt.fit_isotonic("A")
+        rt.fit_isotonic("B")
+        cal_a = rt.calibrate(0.2, engine="A")
+        cal_b = rt.calibrate(0.8, engine="B")
+        assert cal_a > 0.5, ("engine A should map UP toward its hit-rate", cal_a)
+        assert cal_b < 0.5, ("engine B should map DOWN toward its hit-rate", cal_b)
+        assert abs(cal_a - cal_b) > 0.3, ("per-engine maps must differ", cal_a, cal_b)
+        # Persist + reload must preserve the per-engine maps.
+        rt.save()
+        rt2 = ReliabilityTracker(path=path)
+        assert abs(rt2.calibrate(0.2, engine="A") - cal_a) < 1e-9, rt2.calibrate(0.2, "A")
+        assert abs(rt2.calibrate(0.8, engine="B") - cal_b) < 1e-9, rt2.calibrate(0.8, "B")
+        print("  per-engine isotonic isolation OK (A=%.3f B=%.3f)" % (cal_a, cal_b))
+
+
 def main():
     test_reliability_record_and_metrics()
     test_isotonic_fit_and_persist()
     test_calibrate_noop_before_fit()
+    test_isotonic_is_per_engine()
     test_top1_only_counts_live_grades()
     test_legacy_backfilled_top1_is_ignored()
     print("ALL CALIBRATION WIRING TESTS PASSED")

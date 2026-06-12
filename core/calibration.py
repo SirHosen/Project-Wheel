@@ -21,6 +21,7 @@ import os
 
 _EPS = 1e-12
 _MAX_PAIRS = 5000
+_GLOBAL_KEY = "__global__"  # JSON-safe key for the global (engine=None) map
 
 
 def _pava(ys, ws):
@@ -50,8 +51,12 @@ class ReliabilityTracker:
         self.n_bins = n_bins
         self.pairs = []            # global (p, y)
         self.engine_pairs = {}     # engine -> [(p, y), ...]
-        self._iso = None           # (xs, ys) monotone map
-        self._sklearn_model = None
+        # Isotonic maps are stored PER ENGINE (audit V5 bug fix). Previously a
+        # single global attribute was overwritten every round by whichever
+        # engine was confirmed last, so calibrate(engine=...) returned the wrong
+        # engine's curve. Key None = global pool; string keys = per-engine.
+        self._iso_by_engine = {}        # engine -> (xs, ys) PAVA monotone map
+        self._sklearn_by_engine = {}    # engine -> fitted sklearn IsotonicRegression
         self.load()
 
     # ------------------------------------------------------------------ #
@@ -118,9 +123,12 @@ class ReliabilityTracker:
 
     # ------------------------------------------------------------------ #
     def fit_isotonic(self, engine=None):
+        # Fit a monotone p_raw -> p_calibrated map for THIS engine and store it
+        # under the engine key (audit V5 bug fix: no longer a single global map).
         pairs = sorted(self._pick(engine), key=lambda t: t[0])
         if len(pairs) < 10:
-            self._iso = None
+            self._iso_by_engine[engine] = None
+            self._sklearn_by_engine[engine] = None
             return False
         xs = [p for p, _ in pairs]
         ys = [y for _, y in pairs]
@@ -129,11 +137,11 @@ class ReliabilityTracker:
             from sklearn.isotonic import IsotonicRegression  # type: ignore
             ir = IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0)
             ir.fit(xs, ys)
-            self._sklearn_model = ir
-            self._iso = None
+            self._sklearn_by_engine[engine] = ir
+            self._iso_by_engine[engine] = None
             return True
         except Exception:
-            self._sklearn_model = None
+            self._sklearn_by_engine[engine] = None
         # Pure-python PAVA fallback.
         ws = [1.0] * len(ys)
         blocks = _pava(ys, ws)
@@ -147,19 +155,27 @@ class ReliabilityTracker:
             knots_x.append(xs[end])
             knots_y.append(val)
             idx += count
-        self._iso = (knots_x, knots_y)
+        self._iso_by_engine[engine] = (knots_x, knots_y)
         return True
 
     def calibrate(self, p, engine=None):
         p = max(0.0, min(1.0, float(p)))
-        if self._sklearn_model is not None:
+        # Per-engine lookup (audit V5 bug fix): use THIS engine's fitted map,
+        # falling back to the global pool, instead of one clobbered global map.
+        model = self._sklearn_by_engine.get(engine)
+        if model is None:
+            model = self._sklearn_by_engine.get(None)
+        if model is not None:
             try:
-                return float(self._sklearn_model.predict([p])[0])
+                return float(model.predict([p])[0])
             except Exception:
                 pass
-        if not self._iso:
+        iso = self._iso_by_engine.get(engine)
+        if iso is None:
+            iso = self._iso_by_engine.get(None)
+        if not iso:
             return p
-        xs, ys = self._iso
+        xs, ys = iso
         # piecewise-linear interpolation over the isotonic knots
         if p <= xs[0]:
             return ys[0]
@@ -204,10 +220,20 @@ class ReliabilityTracker:
     def save(self):
         try:
             os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+            # Serialize the PAVA isotonic maps PER engine. JSON keys must be
+            # strings, so the global (None) map uses the _GLOBAL_KEY sentinel.
+            # NOTE: scikit-learn models are NOT serializable here; on envs WITH
+            # sklearn the maps simply re-fit on the next confirmed round.
+            iso_ser = {}
+            for eng, iso in self._iso_by_engine.items():
+                if not iso:
+                    continue
+                key = _GLOBAL_KEY if eng is None else str(eng)
+                iso_ser[key] = {"x": iso[0], "y": iso[1]}
             state = {
                 "pairs": self.pairs,
                 "engine_pairs": self.engine_pairs,
-                "isotonic": {"x": self._iso[0], "y": self._iso[1]} if self._iso else None,
+                "isotonic_by_engine": iso_ser,
             }
             with open(self.path, "w") as f:
                 json.dump(state, f)
@@ -224,8 +250,18 @@ class ReliabilityTracker:
             self.pairs = [tuple(t) for t in state.get("pairs", [])]
             self.engine_pairs = {k: [tuple(t) for t in v]
                                  for k, v in state.get("engine_pairs", {}).items()}
-            iso = state.get("isotonic")
-            self._iso = (iso["x"], iso["y"]) if iso else None
+            self._iso_by_engine = {}
+            iso_map = state.get("isotonic_by_engine")
+            if isinstance(iso_map, dict):
+                for key, iso in iso_map.items():
+                    eng = None if key == _GLOBAL_KEY else key
+                    if iso:
+                        self._iso_by_engine[eng] = (iso["x"], iso["y"])
+            else:
+                # Back-compat: old single global "isotonic" key.
+                iso = state.get("isotonic")
+                if iso:
+                    self._iso_by_engine[None] = (iso["x"], iso["y"])
             return True
         except Exception:
             return False

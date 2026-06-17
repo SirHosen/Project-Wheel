@@ -1,8 +1,8 @@
 {
     "current_capital": 0,
-    "total_predictions": 48,
+    "total_predictions": 47,
     "wins": 1,
-    "losses": 47,
+    "losses": 46,
     "profit": -6,
     "history": [
         {
@@ -1606,42 +1606,6 @@
             ],
             "engine_used": "TF-LSTM",
             "mode": "harvest",
-            "top1_hit": false,
-            "top1_graded_live": true
-        },
-        {
-            "timestamp": "2026-06-15T15:10:28.878726",
-            "actual_number": 2,
-            "predicted_number": null,
-            "profit_change": 0,
-            "is_win": false,
-            "bets": [
-                {
-                    "number": 1,
-                    "token_bet": 0,
-                    "confidence": 0.37856827923544595,
-                    "ev_per_token": -0.2428634415291081,
-                    "is_positive_ev": false,
-                    "support": 47
-                },
-                {
-                    "number": 2,
-                    "token_bet": 0,
-                    "confidence": 0.2463666352527417,
-                    "ev_per_token": -0.26090009424177496,
-                    "is_positive_ev": false,
-                    "support": 47
-                },
-                {
-                    "number": 5,
-                    "token_bet": 0,
-                    "confidence": 0.11406354334651501,
-                    "ev_per_token": -0.31561873992090994,
-                    "is_positive_ev": false,
-                    "support": 47
-                }
-            ],
-            "engine_used": "Ensemble",
             "top1_hit": false,
             "top1_graded_live": true
         }

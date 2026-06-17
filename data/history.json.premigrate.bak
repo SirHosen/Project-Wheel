@@ -1,0 +1,153 @@
+{
+    "current_capital": 15,
+    "total_predictions": 4,
+    "wins": 0,
+    "losses": 4,
+    "profit": 0,
+    "history": [
+        {
+            "timestamp": "2026-06-12T17:47:46.014867",
+            "actual_number": 2,
+            "predicted_number": null,
+            "profit_change": 0,
+            "is_win": false,
+            "bets": [
+                {
+                    "number": 1,
+                    "token_bet": 0,
+                    "confidence": 0.38,
+                    "ev_per_token": -0.2592592592592593,
+                    "is_positive_ev": false,
+                    "support": 0
+                },
+                {
+                    "number": 2,
+                    "token_bet": 0,
+                    "confidence": 0.24,
+                    "ev_per_token": -0.2777777777777778,
+                    "is_positive_ev": false,
+                    "support": 0
+                },
+                {
+                    "number": 5,
+                    "token_bet": 0,
+                    "confidence": 0.12,
+                    "ev_per_token": -0.22222222222222232,
+                    "is_positive_ev": false,
+                    "support": 0
+                }
+            ],
+            "engine_used": "AI-Optimal",
+            "top1_hit": false,
+            "top1_graded_live": true
+        },
+        {
+            "timestamp": "2026-06-12T17:47:54.818436",
+            "actual_number": 2,
+            "predicted_number": null,
+            "profit_change": 0,
+            "is_win": false,
+            "bets": [
+                {
+                    "number": 1,
+                    "token_bet": 0,
+                    "confidence": 0.37941558441558443,
+                    "ev_per_token": -0.2727272727272727,
+                    "is_positive_ev": false,
+                    "support": 1
+                },
+                {
+                    "number": 2,
+                    "token_bet": 0,
+                    "confidence": 0.24051948051948052,
+                    "ev_per_token": -0.23636363636363644,
+                    "is_positive_ev": false,
+                    "support": 1
+                },
+                {
+                    "number": 5,
+                    "token_bet": 0,
+                    "confidence": 0.12025974025974026,
+                    "ev_per_token": -0.23636363636363644,
+                    "is_positive_ev": false,
+                    "support": 1
+                }
+            ],
+            "engine_used": "AI-Optimal",
+            "top1_hit": false,
+            "top1_graded_live": true
+        },
+        {
+            "timestamp": "2026-06-12T17:48:32.264599",
+            "actual_number": 1,
+            "predicted_number": null,
+            "profit_change": 0,
+            "is_win": false,
+            "bets": [
+                {
+                    "number": 1,
+                    "token_bet": 0,
+                    "confidence": 0.3759090559038373,
+                    "ev_per_token": -0.24818188819232545,
+                    "is_positive_ev": false,
+                    "support": 2
+                },
+                {
+                    "number": 2,
+                    "token_bet": 0,
+                    "confidence": 0.24406307165960492,
+                    "ev_per_token": -0.26781078502118527,
+                    "is_positive_ev": false,
+                    "support": 2
+                },
+                {
+                    "number": 5,
+                    "token_bet": 0,
+                    "confidence": 0.11979387461677721,
+                    "ev_per_token": -0.28123675229933676,
+                    "is_positive_ev": false,
+                    "support": 2
+                }
+            ],
+            "engine_used": "Ensemble",
+            "top1_hit": true,
+            "top1_graded_live": true
+        },
+        {
+            "timestamp": "2026-06-12T17:49:26.863952",
+            "actual_number": 2,
+            "predicted_number": null,
+            "profit_change": 0,
+            "is_win": false,
+            "bets": [
+                {
+                    "number": 1,
+                    "token_bet": 0,
+                    "confidence": 0.37903703703703706,
+                    "ev_per_token": -0.24192592592592588,
+                    "is_positive_ev": false,
+                    "support": 0
+                },
+                {
+                    "number": 2,
+                    "token_bet": 0,
+                    "confidence": 0.24007407407407405,
+                    "ev_per_token": -0.2797777777777779,
+                    "is_positive_ev": false,
+                    "support": 0
+                },
+                {
+                    "number": 5,
+                    "token_bet": 0,
+                    "confidence": 0.12096296296296295,
+                    "ev_per_token": -0.27422222222222226,
+                    "is_positive_ev": false,
+                    "support": 0
+                }
+            ],
+            "engine_used": "Markov",
+            "top1_hit": false,
+            "top1_graded_live": true
+        }
+    ]
+}

@@ -1,8 +1,8 @@
 {
     "current_capital": 0,
-    "total_predictions": 48,
+    "total_predictions": 49,
     "wins": 1,
-    "losses": 47,
+    "losses": 48,
     "profit": -6,
     "history": [
         {
@@ -1642,6 +1642,42 @@
                 }
             ],
             "engine_used": "Ensemble",
+            "top1_hit": false,
+            "top1_graded_live": true
+        },
+        {
+            "timestamp": "2026-06-22T22:12:10.391447",
+            "actual_number": 2,
+            "predicted_number": null,
+            "profit_change": 0,
+            "is_win": false,
+            "bets": [
+                {
+                    "number": 1,
+                    "token_bet": 0,
+                    "confidence": 0.3728837837837838,
+                    "ev_per_token": -0.25,
+                    "is_positive_ev": false,
+                    "support": 10
+                },
+                {
+                    "number": 2,
+                    "token_bet": 0,
+                    "confidence": 0.2570783783783784,
+                    "ev_per_token": -0.25,
+                    "is_positive_ev": false,
+                    "support": 10
+                },
+                {
+                    "number": 5,
+                    "token_bet": 0,
+                    "confidence": 0.1147108108108108,
+                    "ev_per_token": -0.25,
+                    "is_positive_ev": false,
+                    "support": 10
+                }
+            ],
+            "engine_used": "AI-Optimal",
             "top1_hit": false,
             "top1_graded_live": true
         }

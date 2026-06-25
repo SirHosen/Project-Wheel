@@ -262,6 +262,28 @@ class ReliabilityTracker:
                 iso = state.get("isotonic")
                 if iso:
                     self._iso_by_engine[None] = (iso["x"], iso["y"])
+            # Re-fit every isotonic map from the persisted (p, y) pairs so that
+            # calibration SURVIVES a save/load round-trip on ANY backend. scikit-
+            # learn's IsotonicRegression is NOT JSON-serializable, so without this
+            # a fresh tracker on an env WITH sklearn would silently drop every
+            # per-engine curve and calibrate() would decay to an identity no-op
+            # (audit V6: test_isotonic_is_per_engine failed ONLY when sklearn was
+            # installed). Re-fitting is deterministic -> identical curve -> exact
+            # round-trip, and also makes calibration ready immediately at startup.
+            self._refit_all()
             return True
         except Exception:
             return False
+
+    def _refit_all(self):
+        """Rebuild all isotonic maps from persisted pairs (global + per engine).
+
+        Deterministic: same data + same backend -> identical curve, so a
+        save/load round-trip reproduces calibrate() exactly. Engines with fewer
+        than 10 pairs simply stay no-ops (fit_isotonic returns False).
+        """
+        for eng in [None] + list(self.engine_pairs.keys()):
+            try:
+                self.fit_isotonic(eng)
+            except Exception:
+                pass

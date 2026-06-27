@@ -7,6 +7,8 @@ UI: Tkinter cannot reliably render colour emoji, so they appear as empty boxes.
 Status and accents are conveyed with typography, colour and simple shapes.
 """
 
+import threading
+
 import customtkinter as ctk
 import tkinter.messagebox as messagebox
 import tkinter.filedialog as filedialog
@@ -67,6 +69,18 @@ class MainWindow(ctk.CTk):
         self._bankroll_window = None
         self._vision_window = None
         self._calibration_window = None
+        # PROMPT 21 LIVE VISION panel state. The capture runs on a worker thread
+        # (vision.live_tracker); callbacks only fill these thread-safe slots and
+        # a main-thread poller (_live_poll) does ALL Tk work -- Tkinter is not
+        # thread-safe, so we never touch widgets from the worker.
+        self._live_window = None
+        self._live_tracker = None
+        self._live_lock = threading.Lock()
+        self._live_latest = None        # (PIL.Image, state) newest frame to draw
+        self._live_spin_queue = []       # results of spins that came to rest
+        self._live_error = None          # fatal capture error text
+        self._live_after_id = None       # pending self.after() poll id
+        self._live_preview_img = None    # keep a ref so CTkImage isn't GC'd
         self.bind_all("<Control-Shift-L>", self._open_lab_mode)
         self.bind_all("<Control-Shift-l>", self._open_lab_mode)
 
@@ -519,6 +533,11 @@ class MainWindow(ctk.CTk):
             font=font(12, "bold"), fg_color=C["card"], hover_color=C["info"],
             text_color=C["text"],
         ).pack(side="right", padx=(0, 8))
+        ctk.CTkButton(
+            actions_f, text="LIVE VISION", command=self._open_live_vision_panel, width=140,
+            font=font(12, "bold"), fg_color=C["primary"], hover_color=C["info"],
+            text_color=C["background"],
+        ).pack(side="right", padx=(0, 8))
 
         # Statistical wheel-bias verdict (is the model beating chance?).
         self.bias_lbl = ctk.CTkLabel(
@@ -898,6 +917,298 @@ class MainWindow(ctk.CTk):
             f"Report: {res['report_path']}",
         )
         self._refresh_vision_panel()
+
+    # ================================================================== #
+    # PROMPT 21: LIVE VISION panel (integrated OpenCV screen capture)
+    # ================================================================== #
+    def _open_live_vision_panel(self, event=None):
+        """LIVE VISION: watch the wheel straight from the SCREEN (e.g. a Chrome
+        tab) while you play. Webcam removed -- capture is always screen-based.
+
+        Runs vision.live_tracker.LiveScreenTracker on a background thread, shows
+        a live annotated preview, and logs every spin that comes to REST. This
+        OBSERVES the wheel (rest angle -> segment number); it does NOT predict
+        the next spin.
+        """
+        try:
+            if self._live_window is not None and self._live_window.winfo_exists():
+                self._live_window.lift()
+                return
+        except Exception:
+            self._live_window = None
+
+        from vision.live_tracker import LiveScreenTracker
+
+        win = ctk.CTkToplevel(self)
+        self._live_window = win
+        win.title("Live Vision - Nonton Roda Langsung dari Layar")
+        win.geometry("640x820")
+        win.configure(fg_color=C["background"])
+        win.protocol("WM_DELETE_WINDOW", self._live_close)
+
+        ctk.CTkLabel(
+            win, text="LIVE VISION - tangkap layar (Chrome) langsung",
+            font=font(16, "bold"), text_color=C["secondary"],
+        ).pack(pady=(14, 2), padx=16, anchor="w")
+        ctk.CTkLabel(
+            win, wraplength=600, justify="left", font=font(11), text_color=C["text_secondary"],
+            text=(
+                "Menonton roda LANGSUNG dari layar laptop (mis. tab Chrome) -- webcam "
+                "sudah dihapus. Pilih monitor, atau isi region 'x,y,w,h' (kosong = "
+                "seluruh monitor). Marker default HIJAU yang ikut berputar di roda. "
+                "Tiap spin yang BERHENTI dicatat otomatis ke observation log. "
+                "CATATAN: ini MENGAMATI roda, BUKAN meramal spin berikutnya."
+            ),
+        ).pack(pady=(0, 8), padx=16, anchor="w")
+
+        avail = LiveScreenTracker.is_available()
+        if not avail:
+            ctk.CTkLabel(
+                win, wraplength=600, justify="left", font=font(11, "bold"),
+                text_color=C.get("error", "#FF5555"),
+                text=(
+                    "Dependency Live Vision belum lengkap:\n"
+                    + LiveScreenTracker.status_line()
+                    + "\n\nInstall dulu:  pip install -r requirements-vision.txt"
+                ),
+            ).pack(pady=(0, 8), padx=16, anchor="w")
+
+        ctrl = ctk.CTkFrame(win, fg_color=C["card"], corner_radius=10)
+        ctrl.pack(fill="x", padx=12, pady=(0, 8))
+
+        mon_options = ["1: monitor utama"]
+        self._live_monitor_map = {"1: monitor utama": 1}
+        default = mon_options[0]
+        try:
+            mons = LiveScreenTracker.list_monitors()
+            mon_options = []
+            self._live_monitor_map = {}
+            for i, m in enumerate(mons):
+                tag = "semua layar" if i == 0 else "monitor"
+                label = f"{i}: {tag} {m.get('width')}x{m.get('height')} @({m.get('left')},{m.get('top')})"
+                mon_options.append(label)
+                self._live_monitor_map[label] = i
+            default = mon_options[1] if len(mon_options) > 1 else mon_options[0]
+        except Exception:
+            pass
+
+        ctk.CTkLabel(ctrl, text="Monitor:", font=font(11), text_color=C["text"]).grid(
+            row=0, column=0, sticky="w", padx=10, pady=8)
+        self._live_monitor_var = ctk.StringVar(value=default)
+        ctk.CTkOptionMenu(
+            ctrl, values=mon_options, variable=self._live_monitor_var, width=340,
+        ).grid(row=0, column=1, sticky="w", padx=6, pady=8)
+
+        ctk.CTkLabel(ctrl, text="Region x,y,w,h:", font=font(11), text_color=C["text"]).grid(
+            row=1, column=0, sticky="w", padx=10, pady=8)
+        self._live_region_entry = ctk.CTkEntry(
+            ctrl, width=340, placeholder_text="kosong = seluruh monitor (mis. 100,80,640,640)")
+        self._live_region_entry.grid(row=1, column=1, sticky="w", padx=6, pady=8)
+
+        ctk.CTkLabel(ctrl, text="HSV marker:", font=font(11), text_color=C["text"]).grid(
+            row=2, column=0, sticky="w", padx=10, pady=8)
+        self._live_hsv_entry = ctk.CTkEntry(
+            ctrl, width=340, placeholder_text="kosong = hijau default (loH,loS,loV:hiH,hiS,hiV)")
+        self._live_hsv_entry.grid(row=2, column=1, sticky="w", padx=6, pady=8)
+
+        cbf = ctk.CTkFrame(win, fg_color="transparent")
+        cbf.pack(fill="x", padx=16, pady=(0, 6))
+        self._live_autolog_cb = ctk.CTkCheckBox(
+            cbf, text="Catat tiap spin ke observation log", font=font(11))
+        if getattr(settings, "LIVE_VISION_AUTO_LOG", True):
+            self._live_autolog_cb.select()
+        self._live_autolog_cb.pack(side="left", padx=(0, 16))
+        self._live_autofill_cb = ctk.CTkCheckBox(
+            cbf, text="Auto-isi 'Angka keluar' dari hasil baca", font=font(11))
+        self._live_autofill_cb.pack(side="left")
+
+        btns = ctk.CTkFrame(win, fg_color="transparent")
+        btns.pack(fill="x", padx=12, pady=(0, 8))
+        self._live_start_btn = ctk.CTkButton(
+            btns, text="START", command=self._live_start, width=150, font=font(12, "bold"),
+            fg_color=C["primary"], hover_color=C["info"], text_color=C["background"])
+        self._live_start_btn.pack(side="left", padx=(0, 8))
+        self._live_stop_btn = ctk.CTkButton(
+            btns, text="STOP", command=self._live_stop, width=150, font=font(12, "bold"),
+            fg_color=C["card"], hover_color=C.get("error", "#FF5555"),
+            text_color=C["text"], state="disabled")
+        self._live_stop_btn.pack(side="left")
+        if not avail:
+            self._live_start_btn.configure(state="disabled")
+
+        self._live_preview_lbl = ctk.CTkLabel(
+            win, text="(preview muncul setelah START)", fg_color=C["card"],
+            corner_radius=10, height=320)
+        self._live_preview_lbl.pack(fill="both", expand=True, padx=12, pady=(0, 6))
+
+        self._live_status_lbl = ctk.CTkLabel(
+            win, text="Status: idle.", font=font(11), text_color=C["text_secondary"], anchor="w")
+        self._live_status_lbl.pack(fill="x", padx=16, pady=(0, 2))
+        self._live_last_lbl = ctk.CTkLabel(
+            win, text="Angka terakhir: -", font=font(13, "bold"), text_color=C["text"], anchor="w")
+        self._live_last_lbl.pack(fill="x", padx=16, pady=(0, 12))
+
+    def _live_start(self):
+        """Validate inputs and spawn the live capture thread + UI poller."""
+        from vision.live_tracker import LiveScreenTracker
+        from vision.screen import parse_region, parse_hsv
+        if self._live_tracker is not None and self._live_tracker.is_running():
+            return
+        if not LiveScreenTracker.is_available():
+            messagebox.showwarning(
+                "Live Vision",
+                LiveScreenTracker.status_line()
+                + "\n\nInstall: pip install -r requirements-vision.txt")
+            return
+        try:
+            monitor = int(self._live_monitor_map.get(self._live_monitor_var.get(), 1))
+        except Exception:
+            monitor = 1
+        try:
+            rtxt = self._live_region_entry.get().strip()
+            region = parse_region(rtxt) if rtxt else None
+            htxt = self._live_hsv_entry.get().strip()
+            hsv = parse_hsv(htxt) if htxt else None
+        except ValueError as e:
+            messagebox.showwarning("Live Vision", f"Argumen tidak valid: {e}")
+            return
+        with self._live_lock:
+            self._live_latest = None
+            self._live_spin_queue = []
+            self._live_error = None
+        self._live_tracker = LiveScreenTracker(
+            monitor=monitor, region=region, hsv_ranges=hsv,
+            fps=int(getattr(settings, "LIVE_VISION_FPS", 15)),
+            stop_speed_deg_s=float(getattr(settings, "LIVE_VISION_STOP_SPEED_DEG_S", 8.0)),
+            stable_frames=int(getattr(settings, "LIVE_VISION_STABLE_FRAMES", 6)),
+            on_frame=self._live_frame_cb, on_spin=self._live_spin_cb,
+            on_status=self._live_status_cb,
+        )
+        self._live_tracker.start()
+        self._live_start_btn.configure(state="disabled")
+        self._live_stop_btn.configure(state="normal")
+        self._live_status_lbl.configure(
+            text="Status: menangkap layar... putar rodanya.", text_color=C["text_secondary"])
+        self._live_poll()
+
+    def _live_stop(self):
+        """Stop the capture thread and cancel the UI poller (idempotent)."""
+        try:
+            if self._live_tracker is not None:
+                self._live_tracker.stop()
+        except Exception:
+            pass
+        self._live_tracker = None
+        if self._live_after_id is not None:
+            try:
+                self.after_cancel(self._live_after_id)
+            except Exception:
+                pass
+            self._live_after_id = None
+        try:
+            self._live_start_btn.configure(state="normal")
+            self._live_stop_btn.configure(state="disabled")
+            self._live_status_lbl.configure(text="Status: dihentikan.")
+        except Exception:
+            pass
+
+    def _live_close(self):
+        """Window close handler: stop capture then destroy the panel."""
+        self._live_stop()
+        try:
+            if self._live_window is not None:
+                self._live_window.destroy()
+        except Exception:
+            pass
+        self._live_window = None
+
+    # --- worker-thread callbacks: NO Tkinter here, just fill safe slots ---
+    def _live_frame_cb(self, rgb, state):
+        try:
+            from PIL import Image
+            import numpy as _np
+            img = Image.fromarray(_np.ascontiguousarray(rgb))
+            maxw = int(getattr(settings, "LIVE_VISION_PREVIEW_MAX_W", 520))
+            if img.width > maxw:
+                ratio = maxw / float(img.width)
+                img = img.resize((maxw, max(1, int(img.height * ratio))))
+            with self._live_lock:
+                self._live_latest = (img, state)
+        except Exception:
+            pass
+
+    def _live_spin_cb(self, result):
+        with self._live_lock:
+            self._live_spin_queue.append(result)
+
+    def _live_status_cb(self, st):
+        with self._live_lock:
+            self._live_error = st.get("error")
+
+    # --- main-thread poller: drain slots and do ALL Tk work here ---
+    def _live_poll(self):
+        if self._live_window is None or not self._live_window.winfo_exists():
+            return
+        with self._live_lock:
+            latest = self._live_latest
+            self._live_latest = None
+            spins = self._live_spin_queue
+            self._live_spin_queue = []
+            err = self._live_error
+            self._live_error = None
+        if latest is not None:
+            self._live_render_frame(*latest)
+        for result in spins:
+            self._live_handle_spin(result)
+        if err:
+            try:
+                self._live_status_lbl.configure(
+                    text=f"Status: {err}", text_color=C.get("error", "#FF5555"))
+            except Exception:
+                pass
+        if self._live_tracker is not None and self._live_tracker.is_running():
+            delay = max(30, int(1000 / max(1, int(getattr(settings, "LIVE_VISION_FPS", 15)))))
+            self._live_after_id = self.after(delay, self._live_poll)
+
+    def _live_render_frame(self, pil_img, state):
+        try:
+            w, h = pil_img.size
+            img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=(w, h))
+            self._live_preview_lbl.configure(image=img, text="")
+            self._live_preview_img = img  # keep ref (avoid GC blanking the image)
+        except Exception:
+            pass
+        try:
+            v = float(state.get("velocity", 0.0)) if state else 0.0
+            thr = float(getattr(settings, "LIVE_VISION_STOP_SPEED_DEG_S", 8.0))
+            moving = "BERPUTAR" if abs(v) > thr else "diam"
+            spins = self._live_tracker.spins if self._live_tracker else 0
+            self._live_status_lbl.configure(
+                text=f"Kecepatan: {v:+.0f} deg/s ({moving})   |   Spin terdeteksi: {spins}",
+                text_color=C["text_secondary"],
+            )
+        except Exception:
+            pass
+
+    def _live_handle_spin(self, result):
+        num = result.get("number")
+        conf = float(result.get("confidence", 0.0) or 0.0)
+        if self._live_autolog_cb.get():
+            try:
+                from vision.observation_log import log_observation
+                log_observation(result)
+            except Exception:
+                pass
+        if self._live_autofill_cb.get() and num in settings.VALID_NUMBERS:
+            try:
+                self.result_var.set(str(num))
+            except Exception:
+                pass
+        try:
+            self._live_last_lbl.configure(
+                text=f"Angka terakhir: {num}   (keyakinan baca {conf*100:.0f}%)")
+        except Exception:
+            pass
 
     def _open_calibration_panel(self, event=None):
         """KALIBRASI: how honest is each engine's stated confidence? (audit V5 #2)
@@ -1402,8 +1713,15 @@ class MainWindow(ctk.CTk):
         except Exception:
             return
         gpu = "aktif" if st.get("lstm_ready") else "memanas..."
+        extra = ""
+        try:
+            at = self.vm.auto_train_status() if hasattr(self.vm, "auto_train_status") else None
+            if at and at.get("enabled"):
+                extra = f"  -  Auto-train tiap {at['every']} spin (sisa {at['remaining']})"
+        except Exception:
+            extra = ""
         self.learn_info_lbl.configure(
-            text=f"Belajar dari {st.get('n_observed', 0)} putaran  -  LSTM-GPU: {gpu}"
+            text=f"Belajar dari {st.get('n_observed', 0)} putaran  -  LSTM-GPU: {gpu}{extra}"
         )
         weights = st.get("weights", {})
         accs = st.get("accuracy", {})

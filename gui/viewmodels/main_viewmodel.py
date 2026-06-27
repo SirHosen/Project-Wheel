@@ -36,9 +36,14 @@ class MainViewModel:
         # to models/calibration_state.json. Lets the UI show how honest each
         # engine's confidence is (Brier / log-loss / ECE / reliability bins) and
         # can isotonically RE-MAP raw confidence onto observed hit-rates.
+        # Audit fix (PROMPT 21): kalibrasi HARUS ditulis ke runtime/ (sama seperti
+        # default core/calibration.py) supaya "Reset Data" -- yang mem-purge
+        # runtime/calibration_state.json -- benar-benar ikut menghapusnya. Dulu
+        # di-hardcode ke models/ sehingga state kalibrasi LOLOS dari reset (desync).
         _root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        _calib_rel = getattr(settings, "CALIBRATION_STATE_PATH", "runtime/calibration_state.json")
         self.calibration = ReliabilityTracker(
-            path=os.path.join(_root, "models", "calibration_state.json")
+            path=_calib_rel if os.path.isabs(_calib_rel) else os.path.join(_root, _calib_rel)
         )
         self.wheel_math = WheelMath(settings.SPINWHEEL_SEQUENCE, settings.VALID_NUMBERS)
         # Unified continuous-learning brain: fuses physics + bayes + markov +
@@ -67,6 +72,12 @@ class MainViewModel:
         
         self.risk_percentage = settings.DEFAULT_RISK_PCT
         self.history_length = 100
+        # PROMPT 21 auto-training: hitung spin sejak retrain LSTM terakhir. Otak
+        # Ensemble tetap adaptif tiap spin; retrain LSTM yang berat digerbang ke
+        # tiap AUTO_TRAIN_EVERY_N_SPINS spin. last_auto_train menyimpan ringkasan
+        # retrain terakhir untuk ditampilkan di panel "Live Learning".
+        self._spins_since_train = 0
+        self.last_auto_train = None
         self.manual_percentages = {num: 0.0 for num in settings.VALID_NUMBERS}
 
         # --- Live adaptive prior (self-updating manual %) ---
@@ -201,15 +212,31 @@ class MainViewModel:
                 except Exception:
                     import logging; logging.exception("calibration.record failed")
 
-                # 3. Incremental Train TF (GPU stays warm) + periodic persist.
+                # 3. AUTO-TRAINING (PROMPT 21): latih ulang LSTM tiap N spin, BUKAN
+                # tiap spin. Otak Ensemble sudah mengadaptasi bobotnya tiap spin di
+                # langkah continuous.observe() di atas (ringan); retrain LSTM yang
+                # berat digerbang ke tiap AUTO_TRAIN_EVERY_N_SPINS spin agar hemat
+                # CPU/DirectML. Setelah tiap retrain kita simpan modelnya.
                 history = self.tracker.get_recent_actuals(100)
-                if len(history) > settings.LSTM_SEQUENCE_LENGTH:
-                    self.lstm_engine.train(history, epochs=settings.TF_EPOCHS_INCREMENTAL)
-                    if self.continuous.n_observed % 10 == 0:
+                auto_on = bool(getattr(settings, "AUTO_TRAIN_ENABLED", True))
+                if auto_on and len(history) > settings.LSTM_SEQUENCE_LENGTH:
+                    self._spins_since_train += 1
+                    every = max(1, int(getattr(settings, "AUTO_TRAIN_EVERY_N_SPINS", 20)))
+                    if self._spins_since_train >= every:
+                        self._spins_since_train = 0
                         try:
+                            epochs = int(getattr(settings, "AUTO_TRAIN_EPOCHS", 5))
+                            self.lstm_engine.train(history, epochs=epochs)
                             self.lstm_engine.save()
+                            from datetime import datetime
+                            self.last_auto_train = {
+                                "total_spins": int(self.tracker.get_stats().get("total", len(history))),
+                                "history_used": len(history),
+                                "epochs": epochs,
+                                "timestamp": datetime.now().isoformat(timespec="seconds"),
+                            }
                         except Exception:
-                            pass
+                            import logging; logging.exception("auto-train failed")
                     
             finally:
                 self.is_processing = False
@@ -714,3 +741,16 @@ class MainViewModel:
             return self.continuous.learning_status()
         except Exception:
             return {"n_observed": 0, "weights": {}, "accuracy": {}, "lstm_ready": False}
+
+    def auto_train_status(self) -> dict:
+        """Status auto-training LSTM untuk panel UI: tiap berapa spin retrain,
+        sudah berapa spin sejak retrain terakhir, sisa berapa lagi."""
+        every = max(1, int(getattr(settings, "AUTO_TRAIN_EVERY_N_SPINS", 20)))
+        since = int(getattr(self, "_spins_since_train", 0))
+        return {
+            "enabled": bool(getattr(settings, "AUTO_TRAIN_ENABLED", True)),
+            "every": every,
+            "since": since,
+            "remaining": max(0, every - since),
+            "last": getattr(self, "last_auto_train", None),
+        }

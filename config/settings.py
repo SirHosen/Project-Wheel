@@ -177,3 +177,27 @@ ENSEMBLE_USE_STACKING = False     # True -> blend 50/50 BMA + stacking EM (opsio
 SESSION_GAP_MINUTES = 30        # idle gap that starts a new session
 SESSION_DRIFT_ALPHA = 0.05      # KS 2-sample significance for drift verdict
 RECENCY_HALF_LIFE = 50          # spins per halving for optional recency weighting
+
+# ---------------------------------------------------------
+# PROMPT 21: Auto-training (LSTM) tiap N spin
+# ---------------------------------------------------------
+# Otak Ensemble tetap mengadaptasi BOBOT-nya tiap spin (ringan). Yang BERAT --
+# melatih ulang LSTM -- kini DIGERBANG ke tiap N spin terkonfirmasi, bukan tiap
+# spin, supaya hemat CPU/DirectML (sesuai permintaan: "tiap 20 spin auto-train").
+# Setelah tiap retrain, model disimpan agar restart memuatnya instan.
+AUTO_TRAIN_ENABLED = True
+AUTO_TRAIN_EVERY_N_SPINS = 20      # latih ulang + simpan model tiap 20 spin
+AUTO_TRAIN_EPOCHS = 5             # epoch per auto-retrain (vs incremental = 1)
+
+# ---------------------------------------------------------
+# PROMPT 21: Live Vision (integrasi OpenCV layar ke GUI)
+# ---------------------------------------------------------
+# Game dimainkan DI LAYAR (mis. Chrome), jadi sumber tangkapan SELALU layar.
+# Webcam sudah DIHAPUS dari aplikasi (laptop play). Panel "LIVE VISION" menonton
+# roda secara langsung, menggambar overlay, dan mencatat tiap spin yang berhenti.
+LIVE_VISION_DEFAULT_MONITOR = 1   # 1 = monitor utama (mss); 0 = semua layar
+LIVE_VISION_FPS = 15             # batas frame/detik preview (hemat CPU)
+LIVE_VISION_AUTO_LOG = True       # catat tiap spin yang berhenti ke observation log
+LIVE_VISION_PREVIEW_MAX_W = 520   # lebar maksimum gambar preview di panel (px)
+LIVE_VISION_STOP_SPEED_DEG_S = 8.0  # ambang 'berhenti' (deg/detik)
+LIVE_VISION_STABLE_FRAMES = 6       # frame stabil berturut sebelum dideklarasi berhenti

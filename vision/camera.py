@@ -1,19 +1,22 @@
 # -*- coding: utf-8 -*-
-"""PROMPT 20: OpenCV capture layer for wheel tracking (OPTIONAL).
+"""PROMPT 20/21: OpenCV vision PIPELINE for wheel tracking (OPTIONAL).
 
 This is the only module that touches OpenCV. It is import-safe even when cv2 is
-NOT installed: `opencv_available()` tells you, and the camera class raises a
-clear, friendly error instead of crashing the whole app.
+NOT installed: `opencv_available()` tells you, and callers raise a clear,
+friendly error instead of crashing the whole app.
 
 The heavy lifting (angle math, stop detection, number mapping) lives in
 vision/wheel_tracker.py as pure numpy and is fully unit-tested. Here we only:
   1. turn a BGR frame + HSV color range into a marker centroid, then an angle,
-  2. drive an AngleTracker across frames from a camera/video.
-"""
-import time
+  2. find the wheel center.
 
+PROMPT 21: the webcam driver (the old `CameraWheelTracker`) was REMOVED -- the
+game is played on-screen (e.g. Chrome on the laptop), so capture is ALWAYS
+screen-based. The live source now lives in vision/screen.py (one spin) and
+vision/live_tracker.py (continuous, multi-spin, for the in-app LIVE panel). Both
+reuse the SAME functions below, so the pipeline stays single-sourced and tested.
+"""
 from vision.wheel_tracker import (
-    AngleTracker,
     angle_from_point,
     mask_centroid,
 )
@@ -101,89 +104,3 @@ def detect_wheel_center(frame_bgr):
     except Exception:
         pass
     return fallback
-
-
-class CameraWheelTracker:
-    """Drive an AngleTracker from a webcam or video file.
-
-    Construction never touches the camera. Call `is_available()` first; `run()`
-    raises a clear RuntimeError if cv2 is missing or the source can't be opened.
-    """
-
-    def __init__(self, source=0, center=None, hsv_ranges=None,
-                 stop_speed_deg_s=8.0, stable_frames=6, sequence=None):
-        self.source = source
-        self.center = center
-        self.hsv_ranges = hsv_ranges or DEFAULT_HSV_RANGES
-        self.tracker = AngleTracker(stop_speed_deg_s, stable_frames)
-        if sequence is None:
-            try:
-                from config import settings
-                sequence = settings.SPINWHEEL_SEQUENCE
-            except Exception:
-                sequence = []
-        self.sequence = sequence
-
-    @staticmethod
-    def is_available():
-        return opencv_available()
-
-    def run(self, duration=None, max_frames=None, show=False, on_update=None):
-        """Capture frames and track the wheel until it stops / time runs out.
-
-        Returns the final result dict from AngleTracker.result(). Raises
-        RuntimeError (never a bare cv2 crash) on missing OpenCV / bad source.
-        """
-        if cv2 is None:
-            raise RuntimeError(opencv_status())
-        cap = cv2.VideoCapture(self.source)
-        if not cap.isOpened():
-            cap.release()
-            raise RuntimeError(f"Could not open video source: {self.source!r}")
-        start = time.time()
-        frames = 0
-        try:
-            while True:
-                ok, frame = cap.read()
-                if not ok:
-                    break
-                frames += 1
-                if self.center is None:
-                    self.center = detect_wheel_center(frame)
-                angle, centroid = frame_marker_angle(
-                    frame, self.center, self.hsv_ranges
-                )
-                if angle is not None:
-                    state = self.tracker.add(time.time(), angle)
-                    if on_update:
-                        on_update(state, centroid)
-                    if show:
-                        self._draw(frame, centroid, state)
-                    if state["stopped"]:
-                        break
-                if show:
-                    cv2.imshow("Wheel Tracker (q to quit)", frame)
-                    if cv2.waitKey(1) & 0xFF == ord("q"):
-                        break
-                if duration is not None and (time.time() - start) >= duration:
-                    break
-                if max_frames is not None and frames >= max_frames:
-                    break
-        finally:
-            cap.release()
-            if show:
-                cv2.destroyAllWindows()
-        return self.tracker.result(self.sequence)
-
-    def _draw(self, frame, centroid, state):  # pragma: no cover - visual only
-        if self.center is not None:
-            cx, cy = int(self.center[0]), int(self.center[1])
-            cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
-        if centroid is not None:
-            px, py = int(centroid[0]), int(centroid[1])
-            cv2.circle(frame, (px, py), 6, (0, 255, 0), -1)
-            if self.center is not None:
-                cv2.line(frame, (cx, cy), (px, py), (0, 255, 255), 2)
-        label = f"v={state['velocity']:.0f}deg/s {'STOP' if state['stopped'] else ''}"
-        cv2.putText(frame, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7, (0, 255, 0), 2)

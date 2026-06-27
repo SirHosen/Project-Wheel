@@ -75,10 +75,20 @@ class TfLstmEngine(BasePredictor):
         self._num_to_idx = {n: i for i, n in enumerate(self.valid_numbers)}
         self._idx_to_num = {i: n for n, i in self._num_to_idx.items()}
 
+        # Deteksi apakah GPU yang ada benar-benar bisa menjalankan op LSTM/cuDNN.
+        # DirectML (GPU Windows native) mendaftarkan device "GPU" TAPI tidak
+        # punya kernel CudnnRNN -> training/predict bakal crash
+        # ('No registered kernels ... [[CudnnRNN]]'). Kita probe sekali; kalau
+        # GPU tidak sanggup LSTM, semua op otomatis dipindah ke CPU. Model LSTM
+        # di sini kecil, jadi CPU sudah lebih dari cukup dan app tetap benar.
+        self._gpu_lstm_ok = self._gpu_supports_lstm()
+        self._force_cpu = bool(self._list_gpus()) and not self._gpu_lstm_ok
+
         self._mixed_precision = False
         self._maybe_enable_mixed_precision()
 
-        self.model = self._build_model()
+        with self._device_ctx():
+            self.model = self._build_model()
         self.history_metrics = {"loss": [], "accuracy": [], "val_accuracy": []}
         self._trained = False
 
@@ -88,16 +98,49 @@ class TfLstmEngine(BasePredictor):
     # ------------------------------------------------------------------
     # Setup helpers
     # ------------------------------------------------------------------
+    @staticmethod
+    def _list_gpus():
+        try:
+            return tf.config.list_physical_devices("GPU")
+        except Exception:
+            return []
+
+    def _gpu_supports_lstm(self):
+        """Probe apakah GPU bisa mengeksekusi op LSTM (cuDNN).
+
+        Mengembalikan False di mesin CPU-only DAN di Windows-native DirectML,
+        yang mengekspos device GPU tapi tidak punya kernel CudnnRNN (persis
+        crash 'No registered kernels ... [[CudnnRNN]]').
+        """
+        if not self._list_gpus():
+            return False
+        try:
+            with tf.device("/GPU:0"):
+                probe = LSTM(1)
+                _ = probe(tf.zeros((1, 2, 1)))
+            return True
+        except Exception:
+            return False
+
+    def _device_ctx(self):
+        """Pin op ke CPU saat GPU tidak sanggup LSTM; selain itu no-op."""
+        import contextlib
+        if getattr(self, "_force_cpu", False):
+            return tf.device("/CPU:0")
+        return contextlib.nullcontext()
+
     def _maybe_enable_mixed_precision(self):
-        """Enable float16 compute on GPUs with Tensor Cores (Ampere/RTX 30xx).
-        Falls back silently to full precision on CPU or older cards."""
+        """Aktifkan float16 HANYA pada GPU yang benar-benar bisa menjalankan LSTM
+        kita (CUDA Ampere/RTX 30xx). Dilewati di CPU dan di fallback DirectML,
+        di mana float16 tidak memberi manfaat dan bisa menimbulkan masalah."""
         if not _cfg("LSTM_USE_MIXED_PRECISION", True):
             return
+        if not self._gpu_lstm_ok:
+            return
         try:
-            if tf.config.list_physical_devices("GPU"):
-                mixed_precision.set_global_policy("mixed_float16")
-                self._mixed_precision = True
-                logging.info("TF-LSTM: mixed_float16 enabled (GPU Tensor Cores).")
+            mixed_precision.set_global_policy("mixed_float16")
+            self._mixed_precision = True
+            logging.info("TF-LSTM: mixed_float16 enabled (GPU Tensor Cores).")
         except Exception as e:
             logging.warning(f"TF-LSTM: mixed precision unavailable: {e}")
 
@@ -193,17 +236,19 @@ class TfLstmEngine(BasePredictor):
                 callbacks.append(EarlyStopping(
                     monitor="val_accuracy", patience=patience,
                     restore_best_weights=True))
-            hist = self.model.fit(
-                self._model_inputs(Xn, Xf), y,
-                epochs=epochs,
-                batch_size=min(batch_size, len(Xn)),
-                validation_split=val_split if use_val else 0.0,
-                callbacks=callbacks,
-                verbose=0,
-            )
+            with self._device_ctx():
+                hist = self.model.fit(
+                    self._model_inputs(Xn, Xf), y,
+                    epochs=epochs,
+                    batch_size=min(batch_size, len(Xn)),
+                    validation_split=val_split if use_val else 0.0,
+                    callbacks=callbacks,
+                    verbose=0,
+                )
         else:
-            hist = self.model.fit(self._model_inputs(Xn, Xf), y,
-                                  epochs=epochs, verbose=0)
+            with self._device_ctx():
+                hist = self.model.fit(self._model_inputs(Xn, Xf), y,
+                                      epochs=epochs, verbose=0)
 
         self._record_metrics(hist)
         self._trained = True
@@ -227,7 +272,8 @@ class TfLstmEngine(BasePredictor):
         feats = lf.compute_features(encoded, self.num_classes)
         win = lf.make_predict_window(encoded, feats, self.sequence_length)
         Xn, Xf = win
-        probs = self.model.predict(self._model_inputs(Xn, Xf), verbose=0)[0]
+        with self._device_ctx():
+            probs = self.model.predict(self._model_inputs(Xn, Xf), verbose=0)[0]
 
         predictions = [
             {"number": self._idx_to_num[i], "confidence": float(p)}
@@ -327,7 +373,8 @@ class TfLstmEngine(BasePredictor):
         try:
             path = self._model_path()
             if os.path.exists(path):
-                loaded = load_model(path)
+                with self._device_ctx():
+                    loaded = load_model(path)
                 if not self._model_is_compatible(loaded):
                     logging.warning(
                         "TF-LSTM: saved model is incompatible with the current "

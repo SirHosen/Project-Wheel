@@ -2,6 +2,8 @@
 import os as _os, sys as _sys  # path bootstrap: project root importable from subfolder
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 """Smoke + sanity test for core/diagnostics audit report (no GUI/tf)."""
+import os
+import tempfile
 import random
 from datetime import datetime, timedelta
 from config import settings
@@ -57,7 +59,9 @@ assert abs(r["bankroll"]["realized_profit"] - profit_total) < 1e-6
 md = report_to_markdown(r)
 assert "Laporan Audit" in md and "chi-square" in md.lower()
 
-files = export_audit_bundle(data, "/tmp/audit_demo.md", settings.SPINWHEEL_SEQUENCE, settings.VALID_NUMBERS, app_version=settings.APP_VERSION)
+# Cross-platform: pakai temp dir OS (di Windows tidak ada /tmp).
+_audit_out = os.path.join(tempfile.gettempdir(), "audit_demo.md")
+files = export_audit_bundle(data, _audit_out, settings.SPINWHEEL_SEQUENCE, settings.VALID_NUMBERS, app_version=settings.APP_VERSION)
 print("Files written:", files)
 print("=" * 60)
 print(md)

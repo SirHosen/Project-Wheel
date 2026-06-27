@@ -4,11 +4,16 @@ import pandas as pd
 from datetime import datetime
 
 from data.sqlite_store import SqliteStore, empty_data
+from config import settings
 
 class Tracker:
     """Unified Data Pipeline and History Tracker."""
     
-    def __init__(self, history_file="data/history.json", db_file=None):
+    def __init__(self, history_file=None, db_file=None):
+        # Default lokasi riwayat = folder runtime/ (di-gitignore). Tetap bisa
+        # dioverride lewat argumen (dipakai test & profil alternatif).
+        if history_file is None:
+            history_file = getattr(settings, "HISTORY_PATH", "runtime/history.json")
         self.history_file = history_file
         # Derive the SQLite path as a sibling of history_file when not given
         # explicitly. This keeps the production default identical
@@ -27,7 +32,9 @@ class Tracker:
         self.data = self.load_data()
         
     def ensure_directory(self):
-        os.makedirs(os.path.dirname(self.history_file), exist_ok=True)
+        d = os.path.dirname(self.history_file)
+        if d:
+            os.makedirs(d, exist_ok=True)
         
     def load_data(self) -> dict:
         # 1) SQLite already holds data -> it is the source of truth.
@@ -253,13 +260,19 @@ class Tracker:
             "top1_graded": len(graded),
         }
         
-    def export_csv(self, output_path="data/history.csv"):
+    def export_csv(self, output_path=None):
         """Exports history to CSV using Pandas for analytics.
 
         The nested per-round bet snapshot is encoded as VALID JSON (audit V3 #4)
         so the `bets` column can be parsed back later, instead of an
         un-parseable Python dict repr (single quotes).
         """
+        if output_path is None:
+            output_path = os.path.join(
+                getattr(settings, "EXPORT_DIR", "runtime"), "history.csv")
+        d = os.path.dirname(output_path)
+        if d:
+            os.makedirs(d, exist_ok=True)
         rows = []
         for rec in self.data["history"]:
             r = dict(rec)
@@ -270,8 +283,11 @@ class Tracker:
         df.to_csv(output_path, index=False)
         return output_path
 
-    def export_json(self, output_path="data/history_export.json"):
+    def export_json(self, output_path=None):
         """PROMPT 18: export full history + meta to a JSON file (canonical shape)."""
+        if output_path is None:
+            output_path = os.path.join(
+                getattr(settings, "EXPORT_DIR", "runtime"), "history_export.json")
         d = os.path.dirname(output_path)
         if d:
             os.makedirs(d, exist_ok=True)
@@ -352,7 +368,14 @@ class Tracker:
         return engine_bet_distribution(self.data.get("history", []))
 
     def reset_data(self):
-        """Resets all data to initial state."""
+        """Reset SEMUA data ke kondisi awal yang benar-benar bersih.
+
+        Audit V7 bug fix: dulu reset hanya mengosongkan riwayat spin, sementara
+        state belajar (continuous_state), kalibrasi, risk, dan model LSTM tetap
+        tertinggal -> desync (mis. history 0 record tapi n_observed masih 112).
+        Sekarang reset juga membersihkan SEMUA state turunan itu, jadi "Reset
+        Data" benar-benar mengembalikan otak app ke nol.
+        """
         self.data = {
             "current_capital": 1000,
             "total_predictions": 0,
@@ -362,4 +385,31 @@ class Tracker:
             "history": []
         }
         self.save_data()
+        self._purge_learning_state()
+
+    def _purge_learning_state(self):
+        """Hapus file state belajar/training turunan supaya tidak desync dengan
+        riwayat yang baru saja di-reset. Best-effort: kegagalan diabaikan."""
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+        def _resolve(name, default):
+            p = getattr(settings, name, default)
+            return p if os.path.isabs(p) else os.path.join(root, p)
+
+        targets = [
+            _resolve("LEARNING_STATE_PATH", "runtime/continuous_state.json"),
+            _resolve("CALIBRATION_STATE_PATH", "runtime/calibration_state.json"),
+            _resolve("RISK_STATE_PATH", "runtime/risk_state.json"),
+        ]
+        # Model LSTM bisa .keras (TF>=2.11) atau .h5 (TF 2.10).
+        lstm = _resolve("LSTM_MODEL_PATH", "runtime/lstm_spinwheel.keras")
+        base, _ = os.path.splitext(lstm)
+        targets += [lstm, base + ".keras", base + ".h5"]
+
+        for path in set(targets):
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except Exception:
+                pass
 

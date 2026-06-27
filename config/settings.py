@@ -8,6 +8,20 @@ config/settings.py — Application configuration, constants, and UI themes.
 APP_VERSION = "1.30.1"
 
 # ---------------------------------------------------------
+# Runtime data directory (repo selalu bersih)
+# ---------------------------------------------------------
+# SEMUA artefak yang dihasilkan saat aplikasi berjalan -- riwayat spin, state
+# belajar continuous, kalibrasi, model LSTM, log vision, dan hasil export --
+# ditaruh di SATU folder: runtime/. Folder ini di-.gitignore sehingga tidak ada
+# data/riwayat lokal yang ikut ter-commit ke repo.
+RUNTIME_DIR = "runtime"
+HISTORY_PATH = "runtime/history.json"               # mirror JSON + sibling .db
+CALIBRATION_STATE_PATH = "runtime/calibration_state.json"
+RISK_STATE_PATH = "runtime/risk_state.json"
+VISION_OBSERVATIONS_PATH = "runtime/vision_observations.csv"
+EXPORT_DIR = "runtime"                              # tujuan export_csv / export_json
+
+# ---------------------------------------------------------
 # Wheel Configuration
 # ---------------------------------------------------------
 
@@ -72,7 +86,7 @@ LSTM_BULK_EPOCHS = 60              # heavy one-time training (fast on a 3080)
 LSTM_VALIDATION_SPLIT = 0.15       # held-out split for honest validation
 LSTM_EARLY_STOP_PATIENCE = 8       # stop when val accuracy plateaus
 LSTM_USE_MIXED_PRECISION = True    # float16 Tensor Cores (Ampere/RTX 3080)
-LSTM_MODEL_PATH = "models/lstm_spinwheel.keras"  # saved/reused trained model
+LSTM_MODEL_PATH = "runtime/lstm_spinwheel.keras"  # saved/reused trained model
 # ---- PROMPT 11: attention + feature engineering + augmentation ----
 LSTM_USE_ATTENTION = True          # self-attention (MultiHeadAttention) between LSTMs
 LSTM_ATTENTION_HEADS = 4           # number of attention heads
@@ -137,7 +151,7 @@ WHEEL_SPIN_OMEGA_STD = 3.0   # human spin-to-spin variability (rad/s)
 # Continuous-learning ensemble (core/continuous_engine.py)
 # Persisted learning state so the brain keeps improving across launches.
 # ---------------------------------------------------------
-LEARNING_STATE_PATH = "models/continuous_state.json"
+LEARNING_STATE_PATH = "runtime/continuous_state.json"
 ENSEMBLE_EMA_LR = 0.08       # how fast model trust adapts per spin
 ENSEMBLE_TEMPERATURE = 0.15  # softmax sharpness for blend weights
 ENSEMBLE_WARMUP_SPINS = 30   # spins before markov/lstm earn full trust weight

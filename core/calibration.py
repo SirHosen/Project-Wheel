@@ -46,7 +46,11 @@ def _pava(ys, ws):
 
 
 class ReliabilityTracker:
-    def __init__(self, path="models/calibration_state.json", n_bins=10):
+    def __init__(self, path=None, n_bins=10):
+        if path is None:
+            from config import settings
+            path = getattr(settings, "CALIBRATION_STATE_PATH",
+                           "runtime/calibration_state.json")
         self.path = path
         self.n_bins = n_bins
         self.pairs = []            # global (p, y)

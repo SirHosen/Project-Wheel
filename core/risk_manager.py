@@ -29,7 +29,10 @@ class AdaptiveRiskManager:
     def __init__(self, starting_bankroll, soft_dd=0.20, hard_dd=0.35,
                  loss_streak_brake=5, win_streak_boost=8, daily_stop=0.25,
                  brake_factor=0.5, boost_factor=1.25, max_multiplier=1.5,
-                 path="models/risk_state.json"):
+                 path=None):
+        if path is None:
+            from config import settings
+            path = getattr(settings, "RISK_STATE_PATH", "runtime/risk_state.json")
         sb = float(starting_bankroll) if starting_bankroll else 0.0
         self.starting_bankroll = sb
         self.peak = sb

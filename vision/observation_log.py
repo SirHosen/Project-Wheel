@@ -14,7 +14,13 @@ import os
 from datetime import datetime, timezone
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OBSERVATIONS_PATH = os.path.join(_ROOT, "reports", "vision_observations.csv")
+try:
+    from config import settings as _settings
+    _rel = getattr(_settings, "VISION_OBSERVATIONS_PATH",
+                   "runtime/vision_observations.csv")
+except Exception:
+    _rel = "runtime/vision_observations.csv"
+OBSERVATIONS_PATH = _rel if os.path.isabs(_rel) else os.path.join(_ROOT, _rel)
 
 FIELDS = ["timestamp", "number", "segment_index", "angle", "confidence", "stopped"]
 

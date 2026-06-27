@@ -6,26 +6,34 @@ __pycache__/
 venv/
 .venv/
 env/
+.venv-dml/
+
+# --- Runtime data (riwayat spin + training state) ---
+# SEMUA artefak yang dihasilkan saat app berjalan tinggal di runtime/:
+# history.json/.db, continuous_state.json, calibration_state.json,
+# risk_state.json, lstm_spinwheel.keras/.h5, vision_observations.csv, export.
+# Repo selalu bersih -- tidak ada data/riwayat lokal yang ter-commit.
+runtime/
+!runtime/.gitkeep
 
 # --- Trained model binaries (regenerate via scripts/train_lstm.py) ---
-models/*.keras
-models/*.h5
+*.keras
+*.h5
+models/
 
-# --- Local model state (regenerated at runtime) ---
-models/continuous_state.json
-models/calibration_state.json
-models/risk_state.json
-models/wheel_prior.json
-
-# --- Local databases & JSON migration mirrors ---
-data/*.db
+# --- Legacy local state & databases (lokasi lama sebelum runtime/) ---
+*.db
+data/*.json
 data/*.migrated
-
-# --- Generated reports / exports ---
+data/*.corrupt.json
+data/*.premigrate.bak
+history_export.json
 reports/
+
+# --- Generated audit charts ---
+grafik_audit_*.png
 
 # --- OS / editor noise ---
 .DS_Store
 .idea/
 .vscode/
-.venv-dml/

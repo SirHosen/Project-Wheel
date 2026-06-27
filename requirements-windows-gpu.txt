@@ -1,0 +1,37 @@
+# ============================================================
+# GPU di Windows NATIVE via DirectML (NVIDIA / AMD / Intel)
+# ============================================================
+# FAKTA: TensorFlow >= 2.11 TIDAK bisa memakai GPU di Windows native
+# (keputusan upstream Google). Diagnostik app sudah mencetak ini.
+#
+# Plugin DirectML mengembalikan akselerasi GPU lewat DirectX 12, TAPI
+# mengunci TensorFlow ke versi 2.10 (Keras 2.10). Karena itu model LSTM
+# otomatis disimpan sebagai .h5 (bukan .keras) -- sudah ditangani kode.
+#
+# Pakai di venv Windows yang BERSIH (jangan campur dgn venv TF 2.21):
+#   python -m venv .venv-dml
+#   .venv-dml\Scripts\activate
+#   pip install -r requirements-windows-gpu.txt
+#   python app\main.py
+#
+# Verifikasi GPU kebaca:
+#   python -c "import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))"
+#
+# CATATAN JUJUR: model LSTM proyek ini kecil (seq=10, 9 kelas, data puluhan
+# baris). GPU nyaris tidak mempercepat -- overhead transfer sering bikin LEBIH
+# lambat dari CPU. Pakai ini hanya kalau kamu memang ingin GPU menyala.
+# ============================================================
+
+tensorflow-cpu==2.10.0
+tensorflow-directml-plugin
+numpy<2.0          # TF 2.10 belum kompatibel dengan numpy 2.x
+protobuf<4.0       # hindari bentrok protobuf dgn TF 2.10
+matplotlib
+pandas
+scikit-learn
+Pillow
+customtkinter
+
+# OpenCV (kamera/observasi roda) -- di Windows native ini AKTIF:
+opencv-python>=4.8
+mss>=9.0

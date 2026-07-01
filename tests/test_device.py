@@ -1,0 +1,31 @@
+# -*- coding: utf-8 -*-
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+"""Compute detector: must always return a well-formed dict (GPU or CPU) and
+never raise, whether or not TensorFlow is installed.
+"""
+from ai import device
+
+
+def test_detect_shape():
+    d = device.detect()
+    assert d["backend"] in ("GPU", "CPU"), d
+    assert isinstance(d["gpus"], list)
+    assert isinstance(d["has_tf"], bool)
+    assert isinstance(d.get("label", ""), str) and d["label"]
+    # The GREEN/RED rule the UI relies on.
+    if d["backend"] == "GPU":
+        assert d["has_tf"] and d["gpus"]
+    print("OK device.detect:", d["backend"], "-", d["label"])
+
+
+def test_status_line():
+    s = device.status_line()
+    assert isinstance(s, str) and ("[GPU]" in s or "[CPU]" in s)
+    print("OK device.status_line:", s)
+
+
+if __name__ == "__main__":
+    test_detect_shape()
+    test_status_line()
+    print("ALL CHECKS PASSED")

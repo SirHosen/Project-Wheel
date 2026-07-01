@@ -61,9 +61,29 @@ python scripts\auto_watch.py --region 60,40,1912,974           :: just the game 
 python scripts\auto_watch.py --monitor 1 --no-ui               :: text mode
 ```
 
-The panel shows the last number, spin count, top-3 distribution, a chi-square
-bias p-value, and a BET/SKIP advice. Every result is appended to
-`runtime/observations.csv` -- that is your training data.
+The panel shows a **compute indicator** (🟢 GREEN dot = GPU, 🔴 RED dot = CPU),
+the last number, spin count, top-3 distribution, a chi-square bias p-value, and
+a BET/SKIP advice.
+
+### How results are saved (nothing is ever lost)
+Every detected spin is appended to `runtime/observations.csv` **the instant it
+happens** (one row per spin: timestamp, number, spin index, spike, layout). So
+even a hard `Ctrl+C` keeps all recorded results -- the file is always up to date.
+That CSV is your AI training data (`scripts/train.py` reads it automatically).
+
+### How to close cleanly
+- Click **"Save & Close"** in the panel, or close the window with the **X**.
+- Or press **Ctrl+C once** in the terminal (works in both panel and `--no-ui` mode).
+
+Either way you get a short session summary (spins observed, current advice, and
+the CSV path). No forced kill needed.
+
+### GPU vs CPU indicator
+- 🟢 **GREEN = GPU**: TensorFlow sees a GPU (including DirectML on Windows).
+- 🔴 **RED = CPU**: CPU only, or TensorFlow is not installed.
+
+The same status is printed by `python scripts\train.py` on the `[device]` line,
+and in `--no-ui` mode at startup.
 
 ## 2) Train the AI (the playground)
 

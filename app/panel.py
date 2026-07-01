@@ -4,8 +4,13 @@
 You just play the game. A background thread captures the screen, reads the
 winning number off the result grid (vision/result_reader), logs it, and updates
 the Bayesian bias brain (core/bias_tracker). A small landscape panel shows the
-last number, spin count, top-3 distribution, the bias p-value, and an honest
-BET/SKIP advice. No manual typing.
+compute backend (GREEN=GPU / RED=CPU), the last number, spin count, top-3
+distribution, the bias p-value, and an honest BET/SKIP advice. No manual typing.
+
+Data safety: every detected spin is appended to runtime/observations.csv the
+instant it happens, so nothing is ever lost -- even a hard Ctrl+C keeps all
+recorded results. Close cleanly with the 'Save & Close' button (or the window
+X); a short session summary is printed on exit.
 
 Degrades gracefully: missing mss/opencv/Tk -> clear message, no crash. Falls
 back to a text loop when Tk is unavailable.
@@ -14,7 +19,8 @@ import queue
 import threading
 import time
 
-from config import CAPTURE_FPS, RESULT_MARGIN, STABLE_FRAMES, UI_COLORS
+from config import (CAPTURE_FPS, OBSERVATIONS_PATH, RESULT_MARGIN,
+                    STABLE_FRAMES, UI_COLORS)
 
 
 class CaptureWorker(threading.Thread):
@@ -68,6 +74,15 @@ class CaptureWorker(threading.Thread):
         self.q.put({"type": "stopped"})
 
 
+def _device_info():
+    """Compute backend for the GREEN/RED indicator. Never raises."""
+    try:
+        from ai.device import detect
+        return detect()
+    except Exception:
+        return {"backend": "CPU", "label": "CPU", "gpus": [], "has_tf": False}
+
+
 def _panel_lines(tracker, last_number, spins):
     """Build the panel rows (reused by headless printing)."""
     bt = tracker.bias_test()
@@ -83,6 +98,19 @@ def _panel_lines(tracker, last_number, spins):
             ("BIAS", bias), ("ADVICE", rec)]
 
 
+def _print_close_summary(tracker, spins):
+    """Friendly exit summary so a close never feels like a crash."""
+    print("\n[auto-watch] closing cleanly ...")
+    print(f"[auto-watch] spins observed this session : {spins}")
+    try:
+        print(f"[auto-watch] advice                     : {tracker.summary()['recommendation']}")
+    except Exception:
+        pass
+    print(f"[auto-watch] all results saved to        : {OBSERVATIONS_PATH}")
+    print("[auto-watch] (results are written after EVERY spin, so nothing is lost.)")
+    print("[auto-watch] train on them later with     : python scripts/train.py")
+
+
 def run_ui(worker, tracker):
     """Tiny always-on-top landscape panel. Returns False if Tk is unavailable."""
     try:
@@ -91,16 +119,32 @@ def run_ui(worker, tracker):
         print(f"[auto-watch] Tk unavailable ({e}); use --no-ui for text mode.")
         return False
     C = UI_COLORS
+    dev = _device_info()
+    dev_color = C["gpu"] if dev.get("backend") == "GPU" else C["cpu"]
+
     root = tk.Tk()
     root.title("Spinwheel Auto-Watch")
     root.configure(bg=C["background"])
     root.attributes("-topmost", True)
-    root.geometry("360x150+40+40")
-    root.minsize(300, 130)
+    root.geometry("380x228+40+40")
+    root.minsize(320, 210)
+
     header = tk.Label(root, text="AUTO-WATCH  (observe only - no prediction)",
                       bg=C["background"], fg=C["text_secondary"], anchor="w",
                       font=("Segoe UI", 8))
     header.pack(fill="x", padx=10, pady=(8, 2))
+
+    # Compute indicator: GREEN dot = GPU, RED dot = CPU.
+    devfr = tk.Frame(root, bg=C["background"])
+    devfr.pack(fill="x", padx=10, pady=(0, 4))
+    tk.Label(devfr, text="COMPUTE", width=7, anchor="w", bg=C["background"],
+             fg=C["text_secondary"], font=("Segoe UI", 9, "bold")).pack(side="left")
+    tk.Label(devfr, text="\u25CF", bg=C["background"], fg=dev_color,
+             font=("Segoe UI", 12)).pack(side="left")
+    tk.Label(devfr, text=" " + dev.get("label", dev.get("backend", "CPU")),
+             anchor="w", bg=C["background"], fg=dev_color,
+             font=("Segoe UI", 9, "bold")).pack(side="left", fill="x", expand=True)
+
     rows = {}
     for key in ("LAST", "SPINS", "TOP3", "BIAS", "ADVICE"):
         fr = tk.Frame(root, bg=C["background"])
@@ -112,7 +156,27 @@ def run_ui(worker, tracker):
                        font=("Segoe UI", 10))
         val.pack(side="left", fill="x", expand=True)
         rows[key] = val
-    state = {"last": None, "spins": 0}
+
+    state = {"last": None, "spins": 0, "closing": False}
+
+    def on_close():
+        if state["closing"]:
+            return
+        state["closing"] = True
+        worker.stop()
+        _print_close_summary(tracker, state["spins"])
+        root.after(250, root.destroy)
+
+    # Bottom bar: status + explicit Save & Close button.
+    btnfr = tk.Frame(root, bg=C["background"])
+    btnfr.pack(fill="x", padx=10, pady=(8, 8), side="bottom")
+    saved = tk.Label(btnfr, text="saving each spin \u2713", bg=C["background"],
+                     fg=C["text_secondary"], font=("Segoe UI", 8))
+    saved.pack(side="left")
+    tk.Button(btnfr, text="Save & Close", command=on_close,
+              bg=C["button"], fg=C["text"], activebackground=C["primary"],
+              relief="flat", font=("Segoe UI", 9, "bold"),
+              padx=10, pady=2).pack(side="right")
 
     def poll():
         try:
@@ -131,22 +195,25 @@ def run_ui(worker, tracker):
             pass
         for key, txt in _panel_lines(tracker, state["last"], state["spins"]):
             rows[key].config(text=txt)
-        root.after(150, poll)
-
-    def on_close():
-        worker.stop()
-        root.after(200, root.destroy)
+        if not state["closing"]:
+            root.after(150, poll)
 
     root.protocol("WM_DELETE_WINDOW", on_close)
     worker.start()
     poll()
-    root.mainloop()
+    try:
+        root.mainloop()
+    except KeyboardInterrupt:  # Ctrl+C in the launching terminal -> clean close
+        on_close()
     return True
 
 
 def run_headless(worker, tracker):
     """Text-mode loop: print each detected spin + running bias summary."""
-    print("[auto-watch] Text mode (no panel). Ctrl+C to stop.")
+    dev = _device_info()
+    tag = "GPU (green)" if dev.get("backend") == "GPU" else "CPU (red)"
+    print(f"[auto-watch] compute: {tag} - {dev.get('label', '')}")
+    print("[auto-watch] Text mode (no panel). Press Ctrl+C once to stop cleanly.")
     worker.start()
     last, spins = None, 0
     try:
@@ -168,8 +235,8 @@ def run_headless(worker, tracker):
             elif kind == "stopped":
                 break
     except KeyboardInterrupt:
-        print("\n[auto-watch] stopped.")
         worker.stop()
+    _print_close_summary(tracker, spins)
     return 0
 
 

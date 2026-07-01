@@ -58,4 +58,7 @@ UI_COLORS = {
     "text": "#cdd6f4",
     "text_secondary": "#9399b2",
     "primary": "#89b4fa",
+    "gpu": "#a6e3a1",      # green  = AI running on GPU
+    "cpu": "#f38ba8",      # red    = AI running on CPU (or no TensorFlow)
+    "button": "#313244",   # button background
 }

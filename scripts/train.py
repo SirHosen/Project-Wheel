@@ -40,8 +40,12 @@ def main(argv=None):
     args = p.parse_args(argv)
 
     from ai import lstm
+    from ai.device import status_line as device_status
     from core.bias_tracker import OnlineBiasTracker
     from core.physics import predictability_report
+
+    # Show the compute backend up front (GREEN=GPU / RED=CPU in the panel).
+    print(f"[device] {device_status()}")
 
     # --- load the result history ------------------------------------------
     if args.demo:

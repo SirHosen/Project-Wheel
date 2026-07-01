@@ -16,8 +16,6 @@ ENV/
 env.bak/
 venv.bak/
 
-# Project-specific paths (runtime dataset and models)
-/runtime/
 
 # IDE / Editor configuration
 .vscode/

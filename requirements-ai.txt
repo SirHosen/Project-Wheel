@@ -1,0 +1,12 @@
+# AI training playground (scripts/train.py). Optional: everything else works
+# without TensorFlow -- the LSTM module degrades gracefully when it is absent.
+#
+# Windows 11 / macOS / Linux:
+#     pip install -r requirements-ai.txt
+# NVIDIA GPU on Linux/WSL (optional; the model is tiny so CPU is plenty):
+#     pip install "tensorflow[and-cuda]>=2.16"
+#
+# Note: on Windows-native, TensorFlow >= 2.11 is CPU-only (upstream decision).
+# The model here is small, so CPU is more than enough.
+numpy>=1.24
+tensorflow>=2.16

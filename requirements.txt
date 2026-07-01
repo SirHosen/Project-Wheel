@@ -1,7 +1,2 @@
-customtkinter
-numpy
-matplotlib
-tensorflow
-pandas
-scikit-learn
-Pillow
+# Core (always needed). Tiny on purpose.
+numpy>=1.24

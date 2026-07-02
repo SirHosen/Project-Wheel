@@ -1,12 +1,20 @@
 # -*- coding: utf-8 -*-
-"""Reads the winning number off the game's result display by watching which
-cell lights up.
+"""Reads the winning number off the game's result row by watching which number
+cell lights up after a spin.
 
 Method (robust, no OCR): for each number cell we track its brightness (HSV Value)
-against a rolling baseline (40th percentile over a few seconds). When one cell
-spikes `margin` above its baseline and stays the brightest for `stable_frames`
-consecutive frames, we emit that number once, then "re-arm" only after the
-highlight fades. This matched a real landscape capture 10/10 in testing.
+against a rolling baseline (40th percentile over a few seconds). A detection
+fires only when ONE cell:
+  1. spikes >= `margin` above its own baseline, AND
+  2. beats the 2nd-brightest cell by >= `min_separation` (so a glow bleeding
+     into a neighbouring cell can't cause a misread), AND
+  3. stays the clear winner for `stable_frames` consecutive frames.
+After firing we "re-arm" only once the highlight fades.
+
+Cell geometry is CONFIGURABLE (see config.RESULT_LANDSCAPE / RESULT_PORTRAIT and
+the `--snapshot` calibration tool) because the exact on-screen position depends
+on your window size and layout. If detection misreads, run a calibration
+snapshot and nudge the numbers in config.py -- no code changes needed.
 
 Degrades gracefully: without opencv/numpy, opencv_available() is False and the
 caller shows a friendly install hint instead of crashing.
@@ -21,6 +29,8 @@ except Exception as e:  # pragma: no cover - env dependent
     cv2 = None
     np = None
     _CV_ERR = e
+
+from config import (RESULT_LANDSCAPE, RESULT_MIN_SEPARATION, RESULT_PORTRAIT)
 
 NUMS = [1, 2, 5, 8, 10, 15, 20, 30, 40]
 
@@ -38,28 +48,31 @@ def status_line():
 
 
 def _landscape_cells():
-    """9 numbers in a horizontal result bar, evenly spaced."""
-    fy = 0.8573
-    fx0, fx1 = 0.2730, 0.7416
+    """9 numbers in a horizontal result row, evenly spaced (from config)."""
+    c = RESULT_LANDSCAPE
+    fy = c["fy"]
+    fx0, fx1 = c["fx_start"], c["fx_end"]
     step = (fx1 - fx0) / (len(NUMS) - 1)
     return [(NUMS[i], fx0 + i * step, fy) for i in range(len(NUMS))]
 
 
 def _portrait_cells():
-    """3x3 grid of numbers (row-major)."""
-    rows = [0.5708, 0.6750, 0.7833]
-    cols = [0.4010, 0.5000, 0.5990]
+    """3x3 grid of numbers, row-major (from config)."""
+    c = RESULT_PORTRAIT
+    rows, cols = c["rows"], c["cols"]
     cells = []
     for r, fy in enumerate(rows):
-        for c, fx in enumerate(cols):
-            cells.append((NUMS[r * 3 + c], fx, fy))
+        for col, fx in enumerate(cols):
+            cells.append((NUMS[r * 3 + col], fx, fy))
     return cells
 
 
-LAYOUTS = {
-    "landscape": {"cells": _landscape_cells(), "bw": 0.0145, "bh": 0.0285},
-    "portrait": {"cells": _portrait_cells(), "bw": 0.0271, "bh": 0.0271},
-}
+def layout_spec(layout):
+    if layout == "portrait":
+        return {"cells": _portrait_cells(), "bw": RESULT_PORTRAIT["bw"],
+                "bh": RESULT_PORTRAIT["bh"]}
+    return {"cells": _landscape_cells(), "bw": RESULT_LANDSCAPE["bw"],
+            "bh": RESULT_LANDSCAPE["bh"]}
 
 
 def detect_layout(frame_w, frame_h):
@@ -71,11 +84,12 @@ def detect_layout(frame_w, frame_h):
 class ResultReader:
     def __init__(self, frame_w, frame_h, layout=None, fps=15,
                  baseline_window_s=8.0, margin=26.0, stable_frames=3,
-                 rearm_ratio=0.4, cells_override=None):
+                 rearm_ratio=0.4, min_separation=RESULT_MIN_SEPARATION,
+                 cells_override=None):
         self.w = int(frame_w)
         self.h = int(frame_h)
         self.layout = layout or detect_layout(frame_w, frame_h)
-        spec = LAYOUTS[self.layout]
+        spec = layout_spec(self.layout)
         self.bw = spec["bw"]
         self.bh = spec["bh"]
         cells = cells_override or spec["cells"]
@@ -87,6 +101,7 @@ class ResultReader:
             hh = max(1, int(self.bh * self.h / 2))
             self.boxes.append((number, cx - hw, cy - hh, cx + hw, cy + hh))
         self.margin = float(margin)
+        self.min_separation = float(min_separation)
         self.stable_frames = int(stable_frames)
         self.rearm_ratio = float(rearm_ratio)
         maxlen = max(4, int(round(baseline_window_s * fps)))
@@ -123,9 +138,12 @@ class ResultReader:
             spikes.append(b - baseline)
             hist.append(b)
 
-        best = int(np.argmax(spikes))
+        order = np.argsort(spikes)[::-1]
+        best = int(order[0])
         best_spike = spikes[best]
+        second_spike = spikes[int(order[1])] if len(order) > 1 else -1e9
         number = self.boxes[best][0]
+        clear_winner = (best_spike - second_spike) >= self.min_separation
 
         if not self._armed:
             # Wait for the highlight to fade before detecting the next spin.
@@ -135,7 +153,7 @@ class ResultReader:
                 self._cand_streak = 0
             return None
 
-        if best_spike >= self.margin:
+        if best_spike >= self.margin and clear_winner:
             if self._cand == number:
                 self._cand_streak += 1
             else:
@@ -146,8 +164,22 @@ class ResultReader:
                 self._armed = False
                 self._cand_streak = 0
                 return {"number": number, "t": t, "spin_index": self._spin_index,
-                        "spike": best_spike, "layout": self.layout}
+                        "spike": best_spike, "separation": best_spike - second_spike,
+                        "layout": self.layout}
         else:
             self._cand = None
             self._cand_streak = 0
         return None
+
+    def annotate(self, frame):
+        """Return a copy of the frame with each cell box + number drawn on it.
+        Used by the `--snapshot` calibration tool so you can visually check
+        that the boxes sit on the real number cells."""
+        out = frame.copy()
+        for number, x0, y0, x1, y1 in self.boxes:
+            cv2.rectangle(out, (x0, y0), (x1, y1), (0, 255, 0), 2)
+            cv2.putText(out, str(number), (x0, max(0, y0 - 6)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        cv2.putText(out, f"layout={self.layout}  {self.w}x{self.h}",
+                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+        return out

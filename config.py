@@ -52,6 +52,29 @@ CAPTURE_FPS = 15
 RESULT_MARGIN = 26.0
 STABLE_FRAMES = 3
 
+# --- Result reader calibration -------------------------------------------
+# Positions are FRACTIONS of the captured frame (0..1), so they adapt to any
+# resolution. If detection misreads numbers, run:
+#     python scripts\auto_watch.py --snapshot --monitor 1
+# open runtime/calibration.png, and nudge these until each green box sits on
+# the matching number cell in the game's result row.
+RESULT_LANDSCAPE = {
+    "fy": 0.8573,        # vertical center of the result row
+    "fx_start": 0.2730,  # x-center of the first number (1)
+    "fx_end": 0.7416,    # x-center of the last number (40)
+    "bw": 0.0145,        # sample box width
+    "bh": 0.0285,        # sample box height
+}
+RESULT_PORTRAIT = {
+    "rows": [0.5708, 0.6750, 0.7833],
+    "cols": [0.4010, 0.5000, 0.5990],
+    "bw": 0.0271,
+    "bh": 0.0271,
+}
+# A detection must beat the 2nd-brightest cell by at least this much (guards
+# against a glow bleeding into a neighbouring number and causing a misread).
+RESULT_MIN_SEPARATION = 8.0
+
 # --- UI (tiny live panel) -------------------------------------------------
 UI_COLORS = {
     "background": "#1e1e2e",
@@ -61,4 +84,5 @@ UI_COLORS = {
     "gpu": "#a6e3a1",      # green  = AI running on GPU
     "cpu": "#f38ba8",      # red    = AI running on CPU (or no TensorFlow)
     "button": "#313244",   # button background
+    "surface": "#313244",  # separators / bar troughs
 }

@@ -78,6 +78,20 @@ That CSV is your AI training data (`scripts/train.py` reads it automatically).
 Either way you get a short session summary (spins observed, current advice, and
 the CSV path). No forced kill needed.
 
+### ⚠️ Detection accuracy comes first (calibration)
+Everything downstream (stats, bias test, AI) is only as good as the numbers the
+reader records. If the detected distribution looks wrong (e.g. it never records
+a `1`, which should be the most common number), the cell boxes are misaligned.
+Fix it in seconds:
+```bat
+python scripts\auto_watch.py --snapshot --monitor 1
+```
+This saves `runtime\calibration.png` with green boxes drawn where the reader is
+looking. If the boxes are not sitting on the game's result-row numbers, edit
+`RESULT_LANDSCAPE` (or `RESULT_PORTRAIT`) in `config.py` -- `fx_start` = center
+of `1`, `fx_end` = center of `40`, `fy` = row height -- then snapshot again
+until they line up. Accurate boxes = trustworthy data.
+
 ### GPU vs CPU indicator
 - 🟢 **GREEN = GPU**: TensorFlow sees a GPU (including DirectML on Windows).
 - 🔴 **RED = CPU**: CPU only, or TensorFlow is not installed.

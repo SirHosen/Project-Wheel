@@ -1,19 +1,17 @@
 # -*- coding: utf-8 -*-
-"""AUTO-WATCH: zero-manual-input screen reader + a tiny always-on-top panel.
+"""AUTO-WATCH: zero-manual-input screen reader + a clean always-on-top panel.
 
 You just play the game. A background thread captures the screen, reads the
-winning number off the result grid (vision/result_reader), logs it, and updates
-the Bayesian bias brain (core/bias_tracker). A small landscape panel shows the
-compute backend (GREEN=GPU / RED=CPU), the last number, spin count, top-3
-distribution, the bias p-value, and an honest BET/SKIP advice. No manual typing.
+winning number off the result row (vision/result_reader), logs it, and updates
+the Bayesian bias brain (core/bias_tracker). The panel shows the compute
+backend (GREEN=GPU / RED=CPU), a big LAST number, spin count, the top-3
+distribution with mini bars, the bias p-value, and an honest BET/SKIP advice.
 
 Data safety: every detected spin is appended to runtime/observations.csv the
-instant it happens, so nothing is ever lost -- even a hard Ctrl+C keeps all
-recorded results. Close cleanly with the 'Save & Close' button (or the window
-X); a short session summary is printed on exit.
+instant it happens, so nothing is ever lost. Close cleanly with 'Save & Close'
+(or the window X, or Ctrl+C once); a short session summary is printed on exit.
 
-Degrades gracefully: missing mss/opencv/Tk -> clear message, no crash. Falls
-back to a text loop when Tk is unavailable.
+Degrades gracefully: missing mss/opencv/Tk -> clear message, no crash.
 """
 import queue
 import threading
@@ -83,23 +81,33 @@ def _device_info():
         return {"backend": "CPU", "label": "CPU", "gpus": [], "has_tf": False}
 
 
-def _panel_lines(tracker, last_number, spins):
-    """Build the panel rows (reused by headless printing)."""
+def _stats(tracker, last_number, spins):
+    """Compute the display values (shared by UI + headless)."""
     bt = tracker.bias_test()
     bb = tracker.best_bet()
     post = tracker.posterior()
     top = sorted(post.items(), key=lambda kv: kv[1]["mean"], reverse=True)[:3]
-    dist = "  ".join(f"{n}:{d['mean']*100:4.1f}%" for n, d in top)
-    bias = ("BIASED (p=%.3f)" % bt["p_value"]) if bt["biased"] else (
-        "no bias yet (p=%.3f)" % bt["p_value"] if bt["n"] else "--")
-    rec = ("BET %d  EV_lo=%.3f" % (bb["number"], bb["ev_lo"])) if bb else "SKIP (no robust +EV)"
-    return [("LAST", str(last_number) if last_number is not None else "--"),
-            ("SPINS", str(spins)), ("TOP3", dist or "--"),
-            ("BIAS", bias), ("ADVICE", rec)]
+    if bt["n"] < 25:
+        bias = f"collecting ({bt['n']}/25 spins)"
+    elif bt["biased"]:
+        bias = f"BIASED  (p={bt['p_value']:.3f})"
+    else:
+        bias = f"looks fair  (p={bt['p_value']:.3f})"
+    advice = (f"BET {bb['number']}   EV\u2193={bb['ev_lo']:+.3f}") if bb else "SKIP"
+    return {"last": last_number, "spins": spins, "top": top,
+            "bias": bias, "advice": advice, "has_bet": bb is not None}
+
+
+def _panel_lines(tracker, last_number, spins):
+    """Plain-text rows for headless mode."""
+    s = _stats(tracker, last_number, spins)
+    dist = "  ".join(f"{n}:{d['mean']*100:4.1f}%" for n, d in s["top"]) or "--"
+    return [("LAST", str(s["last"]) if s["last"] is not None else "--"),
+            ("SPINS", str(s["spins"])), ("TOP3", dist),
+            ("BIAS", s["bias"]), ("ADVICE", s["advice"])]
 
 
 def _print_close_summary(tracker, spins):
-    """Friendly exit summary so a close never feels like a crash."""
     print("\n[auto-watch] closing cleanly ...")
     print(f"[auto-watch] spins observed this session : {spins}")
     try:
@@ -112,9 +120,10 @@ def _print_close_summary(tracker, spins):
 
 
 def run_ui(worker, tracker):
-    """Tiny always-on-top landscape panel. Returns False if Tk is unavailable."""
+    """Clean always-on-top panel. Returns False if Tk is unavailable."""
     try:
         import tkinter as tk
+        from tkinter import font as tkfont
     except Exception as e:  # pragma: no cover
         print(f"[auto-watch] Tk unavailable ({e}); use --no-ui for text mode.")
         return False
@@ -122,40 +131,87 @@ def run_ui(worker, tracker):
     dev = _device_info()
     dev_color = C["gpu"] if dev.get("backend") == "GPU" else C["cpu"]
 
+    PAD = 14
     root = tk.Tk()
     root.title("Spinwheel Auto-Watch")
     root.configure(bg=C["background"])
     root.attributes("-topmost", True)
-    root.geometry("380x228+40+40")
-    root.minsize(320, 210)
+    root.geometry("340x340+40+40")
+    root.minsize(320, 320)
 
-    header = tk.Label(root, text="AUTO-WATCH  (observe only - no prediction)",
-                      bg=C["background"], fg=C["text_secondary"], anchor="w",
-                      font=("Segoe UI", 8))
-    header.pack(fill="x", padx=10, pady=(8, 2))
+    f_title = tkfont.Font(family="Segoe UI", size=10, weight="bold")
+    f_small = tkfont.Font(family="Segoe UI", size=8)
+    f_label = tkfont.Font(family="Segoe UI", size=9)
+    f_val = tkfont.Font(family="Segoe UI", size=11, weight="bold")
+    f_big = tkfont.Font(family="Segoe UI", size=40, weight="bold")
+    f_advice = tkfont.Font(family="Segoe UI", size=13, weight="bold")
 
-    # Compute indicator: GREEN dot = GPU, RED dot = CPU.
-    devfr = tk.Frame(root, bg=C["background"])
-    devfr.pack(fill="x", padx=10, pady=(0, 4))
-    tk.Label(devfr, text="COMPUTE", width=7, anchor="w", bg=C["background"],
-             fg=C["text_secondary"], font=("Segoe UI", 9, "bold")).pack(side="left")
-    tk.Label(devfr, text="\u25CF", bg=C["background"], fg=dev_color,
-             font=("Segoe UI", 12)).pack(side="left")
-    tk.Label(devfr, text=" " + dev.get("label", dev.get("backend", "CPU")),
-             anchor="w", bg=C["background"], fg=dev_color,
-             font=("Segoe UI", 9, "bold")).pack(side="left", fill="x", expand=True)
+    def sep():
+        tk.Frame(root, bg=C["surface"], height=1).pack(fill="x", padx=PAD, pady=6)
 
-    rows = {}
-    for key in ("LAST", "SPINS", "TOP3", "BIAS", "ADVICE"):
-        fr = tk.Frame(root, bg=C["background"])
-        fr.pack(fill="x", padx=10)
-        tk.Label(fr, text=key, width=7, anchor="w", bg=C["background"],
-                 fg=C["text_secondary"], font=("Segoe UI", 9, "bold")).pack(side="left")
-        val = tk.Label(fr, text="--", anchor="w", bg=C["background"],
-                       fg=(C["primary"] if key in ("LAST", "ADVICE") else C["text"]),
-                       font=("Segoe UI", 10))
-        val.pack(side="left", fill="x", expand=True)
-        rows[key] = val
+    # ---- Title + compute dot -------------------------------------------
+    top = tk.Frame(root, bg=C["background"])
+    top.pack(fill="x", padx=PAD, pady=(PAD, 2))
+    tk.Label(top, text="AUTO-WATCH", bg=C["background"], fg=C["text"],
+             font=f_title).pack(side="left")
+    dot = tk.Label(top, text="\u25CF", bg=C["background"], fg=dev_color, font=f_val)
+    dot.pack(side="right")
+    tk.Label(top, text=dev.get("label", dev.get("backend", "CPU")),
+             bg=C["background"], fg=dev_color, font=f_small).pack(side="right", padx=(0, 4))
+    subtitle = tk.Label(root, text="observe only \u2013 not a next-spin predictor",
+                        bg=C["background"], fg=C["text_secondary"], font=f_small,
+                        anchor="w")
+    subtitle.pack(fill="x", padx=PAD)
+
+    sep()
+
+    # ---- Big LAST number + spins ---------------------------------------
+    mid = tk.Frame(root, bg=C["background"])
+    mid.pack(fill="x", padx=PAD)
+    last_val = tk.Label(mid, text="--", bg=C["background"], fg=C["primary"], font=f_big)
+    last_val.pack(side="left")
+    rt = tk.Frame(mid, bg=C["background"])
+    rt.pack(side="right", anchor="s", pady=(0, 8))
+    tk.Label(rt, text="LAST RESULT", bg=C["background"], fg=C["text_secondary"],
+             font=f_small).pack(anchor="e")
+    spins_val = tk.Label(rt, text="0 spins", bg=C["background"], fg=C["text"], font=f_val)
+    spins_val.pack(anchor="e")
+
+    sep()
+
+    # ---- Top-3 distribution with mini bars -----------------------------
+    tk.Label(root, text="TOP DISTRIBUTION", bg=C["background"],
+             fg=C["text_secondary"], font=f_small, anchor="w").pack(fill="x", padx=PAD)
+    dist_rows = []
+    for _ in range(3):
+        row = tk.Frame(root, bg=C["background"])
+        row.pack(fill="x", padx=PAD, pady=1)
+        num = tk.Label(row, text="", width=4, anchor="w", bg=C["background"],
+                       fg=C["text"], font=f_label)
+        num.pack(side="left")
+        bar_bg = tk.Frame(row, bg=C["surface"], height=14, width=170)
+        bar_bg.pack(side="left", padx=6)
+        bar_bg.pack_propagate(False)
+        bar = tk.Frame(bar_bg, bg=C["primary"], height=14, width=0)
+        bar.place(x=0, y=0, relheight=1)
+        pct = tk.Label(row, text="", width=6, anchor="e", bg=C["background"],
+                       fg=C["text_secondary"], font=f_small)
+        pct.pack(side="right")
+        dist_rows.append((num, bar, bar_bg, pct))
+
+    sep()
+
+    # ---- Bias + Advice --------------------------------------------------
+    brow = tk.Frame(root, bg=C["background"])
+    brow.pack(fill="x", padx=PAD)
+    tk.Label(brow, text="BIAS", width=7, anchor="w", bg=C["background"],
+             fg=C["text_secondary"], font=f_small).pack(side="left")
+    bias_val = tk.Label(brow, text="--", anchor="w", bg=C["background"],
+                        fg=C["text"], font=f_label)
+    bias_val.pack(side="left")
+    advice_val = tk.Label(root, text="SKIP", bg=C["background"], fg=C["cpu"],
+                          font=f_advice, anchor="w")
+    advice_val.pack(fill="x", padx=PAD, pady=(2, 0))
 
     state = {"last": None, "spins": 0, "closing": False}
 
@@ -167,16 +223,14 @@ def run_ui(worker, tracker):
         _print_close_summary(tracker, state["spins"])
         root.after(250, root.destroy)
 
-    # Bottom bar: status + explicit Save & Close button.
-    btnfr = tk.Frame(root, bg=C["background"])
-    btnfr.pack(fill="x", padx=10, pady=(8, 8), side="bottom")
-    saved = tk.Label(btnfr, text="saving each spin \u2713", bg=C["background"],
-                     fg=C["text_secondary"], font=("Segoe UI", 8))
-    saved.pack(side="left")
-    tk.Button(btnfr, text="Save & Close", command=on_close,
-              bg=C["button"], fg=C["text"], activebackground=C["primary"],
-              relief="flat", font=("Segoe UI", 9, "bold"),
-              padx=10, pady=2).pack(side="right")
+    # ---- Footer: status + Save & Close ---------------------------------
+    footer = tk.Frame(root, bg=C["background"])
+    footer.pack(fill="x", padx=PAD, pady=(8, PAD), side="bottom")
+    tk.Label(footer, text="saving each spin \u2713", bg=C["background"],
+             fg=C["text_secondary"], font=f_small).pack(side="left")
+    tk.Button(footer, text="Save & Close", command=on_close, bg=C["button"],
+              fg=C["text"], activebackground=C["primary"], activeforeground=C["text"],
+              relief="flat", font=f_label, padx=12, pady=3, cursor="hand2").pack(side="right")
 
     def poll():
         try:
@@ -187,14 +241,30 @@ def run_ui(worker, tracker):
                     tracker.observe(msg["number"])
                     state["last"], state["spins"] = msg["number"], msg["spin_index"]
                 elif kind == "ready":
-                    header.config(text=f"AUTO-WATCH  layout={msg['layout']}  "
-                                       f"{msg['w']}x{msg['h']}  (observe only)")
+                    subtitle.config(text=f"layout={msg['layout']}  {msg['w']}x{msg['h']}"
+                                         "  \u2013 observe only")
                 elif kind == "error":
-                    rows["ADVICE"].config(text=msg["msg"][:60])
+                    advice_val.config(text=str(msg["msg"])[:40], fg=C["cpu"])
         except queue.Empty:
             pass
-        for key, txt in _panel_lines(tracker, state["last"], state["spins"]):
-            rows[key].config(text=txt)
+        s = _stats(tracker, state["last"], state["spins"])
+        last_val.config(text=str(s["last"]) if s["last"] is not None else "--")
+        spins_val.config(text=f"{s['spins']} spins")
+        maxpct = max((d["mean"] for _, d in s["top"]), default=1e-9)
+        for i, (num, bar, bar_bg, pct) in enumerate(dist_rows):
+            if i < len(s["top"]):
+                n, d = s["top"][i]
+                num.config(text=str(n))
+                pct.config(text=f"{d['mean']*100:.1f}%")
+                w = int(bar_bg.winfo_width() * (d["mean"] / maxpct)) if maxpct else 0
+                bar.config(width=max(2, w))
+            else:
+                num.config(text="")
+                pct.config(text="")
+                bar.config(width=0)
+        bias_val.config(text=s["bias"])
+        advice_val.config(text=s["advice"],
+                          fg=C["gpu"] if s["has_bet"] else C["cpu"])
         if not state["closing"]:
             root.after(150, poll)
 
@@ -203,7 +273,7 @@ def run_ui(worker, tracker):
     poll()
     try:
         root.mainloop()
-    except KeyboardInterrupt:  # Ctrl+C in the launching terminal -> clean close
+    except KeyboardInterrupt:
         on_close()
     return True
 

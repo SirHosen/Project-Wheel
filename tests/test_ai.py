@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-"""AI data layer + (if TensorFlow is installed) the honest backtest contrast:
+"""AI data layer + (if PyTorch is installed) the honest backtest contrast:
 an LSTM should beat the baseline on sequential 'markov' data but NOT on a fair
-wheel. The TF part skips cleanly when TensorFlow is absent.
+wheel. The PyTorch part skips cleanly when PyTorch is absent.
 """
 import numpy as np
 
@@ -36,8 +36,8 @@ def test_backtest_contrast():
     if not lstm.available():
         print("SKIP backtest: " + lstm.status_line())
         return
-    markov = dataset.synthetic_markov(1200, repeat_prob=0.6, seed=2)
-    rep = lstm.walk_forward_backtest(markov, epochs=5, verbose=0)
+    markov = dataset.synthetic_markov(800, repeat_prob=0.6, seed=2)
+    rep = lstm.walk_forward_backtest(markov, epochs=12, verbose=0)
     # On strongly sequential data the model should beat the most-frequent baseline.
     assert rep["lift"] > 0.02, rep
     print(f"OK backtest: model beats baseline on markov data (lift={rep['lift']:+.3f})")

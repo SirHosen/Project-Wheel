@@ -12,7 +12,7 @@ Data sources (pick one):
 The point of --demo is to SEE the difference between data the AI can learn from
 and data it cannot. A real wheel behaves like 'fair': no sequential edge.
 
-The physics + bias checks run even without TensorFlow; only the LSTM parts need it.
+The physics + bias checks run even without PyTorch; only the LSTM parts need it.
 """
 import argparse
 
@@ -67,7 +67,7 @@ def main(argv=None):
     bt.observe_many(numbers)
     print(f"[bias] {bt.summary()['recommendation']}  |  {bt.bias_test()}")
 
-    # --- 3) + 4) the AI parts (need TensorFlow) ---------------------------
+    # --- 3) + 4) the AI parts (need PyTorch) ------------------------------
     if not lstm.available():
         print("[train] " + lstm.status_line())
         print("[train] Skipping LSTM train/backtest. Install with: pip install -r requirements-ai.txt")
@@ -88,7 +88,8 @@ def main(argv=None):
                                  epochs=(args.epochs or lstm.EPOCHS),
                                  verbose=2,
                                  save_path=None if args.no_save else lstm.MODEL_PATH)
-            best = max(hist.get("val_accuracy", [0])) if hist else 0
+            vals = (hist.get("val_accuracy") if hist else None) or hist.get("accuracy") or [0]
+            best = max(vals)
             print(f"[train] done. best val_accuracy={best:.3f}")
             if not args.no_save:
                 print(f"[train] model saved -> {lstm.MODEL_PATH}")

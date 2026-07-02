@@ -1,27 +1,15 @@
 # AI training playground (scripts/train.py). Optional: everything else works
-# without TensorFlow -- the LSTM module degrades gracefully when it is absent.
+# without PyTorch -- the LSTM module degrades gracefully when it is absent.
 #
-#     pip install -r requirements-ai.txt
+# The trainer uses PyTorch. To USE YOUR NVIDIA GPU on Windows, install the CUDA
+# build (this is the important part -- plain `pip install torch` is CPU-only):
 #
-# ---------------------------------------------------------------------------
-# GPU vs CPU -- READ THIS if the compute indicator stays RED on Windows:
+#     pip install torch --index-url https://download.pytorch.org/whl/cu121
 #
-# Native-Windows TensorFlow is CPU-ONLY from 2.11 onward. Google dropped
-# Windows GPU support after TF 2.10, so `tensorflow>=2.16` (what this file
-# installs) will NEVER touch your GPU on Windows -- no config fixes that.
-# Confirm with:  python scripts/gpu_check.py
+# Then confirm with:  python scripts/gpu_check.py  (should say GREEN / CUDA True)
 #
-# This LSTM is TINY (a few hundred numbers), so CPU trains it in seconds and
-# GPU would give basically zero speedup. Red/CPU is totally fine here.
-#
-# If you still want GPU (e.g. for learning), realistic options:
-#   (A) WSL2 + NVIDIA CUDA (NVIDIA GPUs only):
-#         pip install "tensorflow[and-cuda]>=2.16"
-#   (B) Old DirectML path (any DX12 GPU, but frozen at TF 2.10, Python <=3.10):
-#         pip install tensorflow-cpu==2.10.0 tensorflow-directml-plugin
-#   (C) PyTorch + DirectML (any DX12 GPU on Windows) -- different framework,
-#         would require porting the model to PyTorch:
-#         pip install torch-directml
+# No NVIDIA GPU? Plain `pip install torch` gives a CPU build -- still works, and
+# for this tiny model CPU is plenty fast. TensorFlow is NOT needed anymore.
 # ---------------------------------------------------------------------------
 numpy>=1.24
-tensorflow>=2.16
+torch>=2.2

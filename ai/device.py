@@ -1,75 +1,21 @@
 # -*- coding: utf-8 -*-
 """Detect whether AI work runs on GPU or CPU, and explain WHY when it's CPU.
 
-Used for the green/red compute indicator in the panel and for a status line in
-the trainer. Works even when TensorFlow is not installed (reports CPU + a hint).
+The training backend is now PyTorch, so the GREEN/RED panel indicator reflects
+PyTorch/CUDA:
+    GREEN = a CUDA GPU is visible to PyTorch.
+    RED   = CPU only (no CUDA, or PyTorch not installed).
 
-Green  = a GPU is visible to TensorFlow.
-Red    = CPU only (no GPU visible, or TensorFlow not installed).
-
-Important Windows reality: native-Windows TensorFlow is CPU-ONLY from 2.11
-onward. GPU on Windows needs either the old TF 2.10 + DirectML plugin, or a
-different backend (PyTorch), or WSL2 + CUDA. See explain().
-
-detect_torch() reports PyTorch/CUDA separately -- PyTorch (unlike TensorFlow)
-still ships native-Windows CUDA builds, so on an NVIDIA machine it can use the
-GPU without WSL.
+PyTorch (unlike TensorFlow) still ships native-Windows CUDA builds, so on an
+NVIDIA machine it uses the GPU without WSL. detect_tf() is kept only for the
+diagnostic script, to explain why a stray TensorFlow install stays on CPU.
 """
 import platform
 
 
-def _tf_version_tuple(ver):
-    parts = []
-    for p in str(ver).split(".")[:2]:
-        try:
-            parts.append(int(p))
-        except ValueError:
-            parts.append(0)
-    while len(parts) < 2:
-        parts.append(0)
-    return tuple(parts)
-
-
-def detect():
-    """Return a dict describing the TensorFlow compute backend.
-
-    Keys: backend ('GPU'|'CPU'), has_tf (bool), gpus (list[str]),
-          label (str), detail (str), tf_version (str|None), os (str).
-    """
-    info = {"backend": "CPU", "has_tf": False, "gpus": [],
-            "label": "CPU (TensorFlow not installed)", "detail": "",
-            "tf_version": None, "os": platform.system()}
-    try:
-        import tensorflow as tf
-    except Exception as e:  # pragma: no cover - env dependent
-        info["detail"] = f"{type(e).__name__}"
-        return info
-
-    info["has_tf"] = True
-    info["tf_version"] = getattr(tf, "__version__", "?")
-    info["detail"] = f"tensorflow {info['tf_version']}"
-    try:
-        gpus = tf.config.list_physical_devices("GPU")
-    except Exception as e:  # pragma: no cover
-        gpus = []
-        info["detail"] += f"; gpu query failed ({type(e).__name__})"
-    names = [getattr(g, "name", str(g)) for g in gpus]
-    info["gpus"] = names
-    if gpus:
-        info["backend"] = "GPU"
-        info["label"] = f"GPU x{len(gpus)}" + (f"  ({names[0]})" if names else "")
-    else:
-        info["backend"] = "CPU"
-        info["label"] = "CPU (no GPU visible to TensorFlow)"
-    return info
-
-
 def detect_torch():
-    """Report PyTorch/CUDA availability (separate from the TF indicator).
-
-    Keys: has_torch (bool), cuda (bool), torch_version (str|None),
-          device_name (str|None).
-    """
+    """PyTorch/CUDA availability. Keys: has_torch, cuda, torch_version,
+    device_name."""
     out = {"has_torch": False, "cuda": False, "torch_version": None,
            "device_name": None}
     try:
@@ -87,32 +33,66 @@ def detect_torch():
     return out
 
 
+def detect_tf():
+    """TensorFlow/GPU info -- diagnostic only (TF is no longer the trainer).
+    Keys: has_tf, tf_version, gpus."""
+    out = {"has_tf": False, "tf_version": None, "gpus": []}
+    try:
+        import tensorflow as tf
+    except Exception:
+        return out
+    out["has_tf"] = True
+    out["tf_version"] = getattr(tf, "__version__", "?")
+    try:
+        out["gpus"] = [getattr(g, "name", str(g))
+                       for g in tf.config.list_physical_devices("GPU")]
+    except Exception:
+        pass
+    return out
+
+
+def detect():
+    """The panel indicator, based on the ACTIVE training backend (PyTorch).
+
+    Keys: backend ('GPU'|'CPU'), framework (str|None), has_torch (bool),
+          gpus (list[str]), label (str), detail (str), os (str).
+    """
+    t = detect_torch()
+    info = {"backend": "CPU", "framework": None, "has_torch": t["has_torch"],
+            "gpus": [], "label": "CPU (PyTorch not installed)", "detail": "",
+            "os": platform.system()}
+    if not t["has_torch"]:
+        return info
+    info["framework"] = "pytorch"
+    info["detail"] = f"pytorch {t['torch_version']}"
+    if t["cuda"]:
+        info["backend"] = "GPU"
+        info["gpus"] = [t["device_name"]] if t["device_name"] else []
+        info["label"] = f"GPU ({t['device_name']})"
+    else:
+        info["backend"] = "CPU"
+        info["label"] = "CPU (PyTorch, no CUDA GPU visible)"
+    return info
+
+
 def explain(info=None):
     """Human-readable reason for the current backend + how to change it."""
     d = info or detect()
     if d["backend"] == "GPU":
-        return "GPU is active. Nice. (Note: this model is tiny, so CPU is fine too.)"
-    if not d["has_tf"]:
-        return ("TensorFlow is not installed in this environment. "
-                "Install with: pip install -r requirements-ai.txt")
-    ver = _tf_version_tuple(d["tf_version"])
+        return (f"GPU is active via PyTorch ({d['gpus'][0] if d['gpus'] else 'cuda'}). "
+                "Nice. (Note: this model is tiny, so CPU is fine too.)")
+    if not d["has_torch"]:
+        return ("PyTorch is not installed. Install the CUDA build for your NVIDIA "
+                "GPU: pip install torch --index-url "
+                "https://download.pytorch.org/whl/cu121")
     is_windows = d["os"].lower().startswith("win")
-    if is_windows and ver >= (2, 11):
-        return (
-            f"TensorFlow {d['tf_version']} on native Windows is CPU-ONLY. "
-            "Google dropped Windows GPU support after TF 2.10, so NO amount of "
-            "config will make TF use the GPU here. On an NVIDIA GPU the cleanest "
-            "native-Windows path is PyTorch + CUDA (no WSL needed); alternatively "
-            "use WSL2 + tensorflow[and-cuda]. Or just keep CPU -- this LSTM is "
-            "tiny and trains in seconds either way.")
+    hint = ("You likely installed the CPU-only wheel. Reinstall the CUDA build: "
+            "pip uninstall torch -y && pip install torch --index-url "
+            "https://download.pytorch.org/whl/cu121")
     if is_windows:
-        return (
-            f"TensorFlow {d['tf_version']} detected but no GPU is visible. "
-            "For GPU on Windows with this TF you would need the DirectML plugin "
-            "(tensorflow-cpu==2.10 + tensorflow-directml-plugin, Python <=3.10).")
-    return (
-        f"TensorFlow {d['tf_version']} sees no GPU. On Linux install "
-        "tensorflow[and-cuda] and matching NVIDIA drivers/CUDA, or use WSL2.")
+        return ("PyTorch is installed but no CUDA GPU is visible. " + hint
+                + "  (Also check your NVIDIA driver is up to date.)")
+    return "PyTorch is installed but sees no CUDA GPU. " + hint
 
 
 def status_line():

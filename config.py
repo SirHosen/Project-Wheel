@@ -2,7 +2,7 @@
 """Central configuration: wheel layout, payouts, and every tunable knob."""
 import os
 
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.3.0"
 
 # --- Wheel layout ---------------------------------------------------------
 # The 54 physical segments, in wheel order.
@@ -44,7 +44,7 @@ EARLY_STOP_PATIENCE = 8
 # --- Runtime paths --------------------------------------------------------
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 RUNTIME_DIR = os.path.join(ROOT_DIR, "runtime")
-MODEL_PATH = os.path.join(RUNTIME_DIR, "lstm_spinwheel.keras")
+MODEL_PATH = os.path.join(RUNTIME_DIR, "lstm_spinwheel.pt")
 OBSERVATIONS_PATH = os.path.join(RUNTIME_DIR, "observations.csv")
 
 # --- Screen capture -------------------------------------------------------

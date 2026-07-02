@@ -2,7 +2,7 @@
 """Central configuration: wheel layout, payouts, and every tunable knob."""
 import os
 
-APP_VERSION = "2.3.0"
+APP_VERSION = "2.3.1"
 
 # --- Wheel layout ---------------------------------------------------------
 # The 54 physical segments, in wheel order.

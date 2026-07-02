@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """Detect whether AI work runs on GPU or CPU, and explain WHY when it's CPU.
 
-The training backend is now PyTorch, so the GREEN/RED panel indicator reflects
+The training backend is PyTorch, so the GREEN/RED panel indicator reflects
 PyTorch/CUDA:
     GREEN = a CUDA GPU is visible to PyTorch.
     RED   = CPU only (no CUDA, or PyTorch not installed).
 
-PyTorch (unlike TensorFlow) still ships native-Windows CUDA builds, so on an
-NVIDIA machine it uses the GPU without WSL. detect_tf() is kept only for the
-diagnostic script, to explain why a stray TensorFlow install stays on CPU.
+PyTorch (unlike TensorFlow) ships native-Windows CUDA builds, so on an NVIDIA
+machine it uses the GPU without WSL. TensorFlow is intentionally NOT touched
+here -- this project is fully on PyTorch.
 """
 import platform
 
@@ -28,24 +28,6 @@ def detect_torch():
         if torch.cuda.is_available():
             out["cuda"] = True
             out["device_name"] = torch.cuda.get_device_name(0)
-    except Exception:
-        pass
-    return out
-
-
-def detect_tf():
-    """TensorFlow/GPU info -- diagnostic only (TF is no longer the trainer).
-    Keys: has_tf, tf_version, gpus."""
-    out = {"has_tf": False, "tf_version": None, "gpus": []}
-    try:
-        import tensorflow as tf
-    except Exception:
-        return out
-    out["has_tf"] = True
-    out["tf_version"] = getattr(tf, "__version__", "?")
-    try:
-        out["gpus"] = [getattr(g, "name", str(g))
-                       for g in tf.config.list_physical_devices("GPU")]
     except Exception:
         pass
     return out
@@ -85,11 +67,10 @@ def explain(info=None):
         return ("PyTorch is not installed. Install the CUDA build for your NVIDIA "
                 "GPU: pip install torch --index-url "
                 "https://download.pytorch.org/whl/cu121")
-    is_windows = d["os"].lower().startswith("win")
     hint = ("You likely installed the CPU-only wheel. Reinstall the CUDA build: "
             "pip uninstall torch -y && pip install torch --index-url "
             "https://download.pytorch.org/whl/cu121")
-    if is_windows:
+    if d["os"].lower().startswith("win"):
         return ("PyTorch is installed but no CUDA GPU is visible. " + hint
                 + "  (Also check your NVIDIA driver is up to date.)")
     return "PyTorch is installed but sees no CUDA GPU. " + hint

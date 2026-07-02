@@ -20,12 +20,10 @@ def test_detect_shape():
     print("OK device.detect:", d["backend"], "-", d["label"])
 
 
-def test_torch_and_tf_probes():
+def test_torch_probe():
     t = device.detect_torch()
     assert isinstance(t["has_torch"], bool) and isinstance(t["cuda"], bool)
-    tf = device.detect_tf()
-    assert isinstance(tf["has_tf"], bool)
-    print("OK detect_torch/detect_tf shapes")
+    print("OK detect_torch shape")
 
 
 def test_status_line():
@@ -36,6 +34,6 @@ def test_status_line():
 
 if __name__ == "__main__":
     test_detect_shape()
-    test_torch_and_tf_probes()
+    test_torch_probe()
     test_status_line()
     print("ALL CHECKS PASSED")

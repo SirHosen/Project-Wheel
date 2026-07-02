@@ -5,19 +5,18 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)
 
     python scripts/gpu_check.py
 
-The trainer uses PyTorch, so the panel indicator follows PyTorch/CUDA. This also
-shows any TensorFlow install (kept only to explain why a stray TF stays on CPU).
+The trainer uses PyTorch, so the panel indicator follows PyTorch/CUDA. This does
+NOT import TensorFlow (the project is fully on PyTorch), so it stays quiet.
 """
 import platform
 import sys
 
-from ai.device import detect, detect_tf, detect_torch, explain
+from ai.device import detect, detect_torch, explain
 
 
 def main():
     d = detect()
     t = detect_torch()
-    tf = detect_tf()
     print("=" * 62)
     print(" COMPUTE DIAGNOSTIC")
     print("=" * 62)
@@ -29,8 +28,6 @@ def main():
     if t["has_torch"]:
         print(f"  CUDA available   : {t['cuda']}")
         print(f"  CUDA device      : {t['device_name'] or 'none'}")
-    print(f"  TensorFlow       : {tf['tf_version'] or 'not installed'} "
-          "(not used for training)")
     print("-" * 62)
     print("WHY:")
     print("  " + explain(d))

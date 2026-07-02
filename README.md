@@ -93,11 +93,23 @@ of `1`, `fx_end` = center of `40`, `fy` = row height -- then snapshot again
 until they line up. Accurate boxes = trustworthy data.
 
 ### GPU vs CPU indicator
-- 🟢 **GREEN = GPU**: TensorFlow sees a GPU (including DirectML on Windows).
+- 🟢 **GREEN = GPU**: TensorFlow sees a GPU.
 - 🔴 **RED = CPU**: CPU only, or TensorFlow is not installed.
 
 The same status is printed by `python scripts\train.py` on the `[device]` line,
 and in `--no-ui` mode at startup.
+
+**Indicator stuck on RED even with TensorFlow installed?** Run the diagnostic:
+```bat
+python scripts\gpu_check.py
+```
+Most likely reason on Windows: **native-Windows TensorFlow is CPU-ONLY from
+2.11 onward** (Google dropped Windows GPU support after TF 2.10). So a modern
+`tensorflow` (e.g. 2.21) will *never* use your GPU on Windows, no matter the
+venv name -- and there is no config toggle that changes it. Since this LSTM is
+tiny, CPU trains it in seconds and GPU gives ~zero speedup, so RED is fine.
+If you want GPU anyway (for learning), see the options in `requirements-ai.txt`
+(WSL2+CUDA, the old TF 2.10 DirectML plugin, or PyTorch-DirectML).
 
 ## 2) Train the AI (the playground)
 

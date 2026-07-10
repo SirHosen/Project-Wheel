@@ -24,6 +24,25 @@ def test_cells_built():
     print("OK 9 cells built for landscape layout")
 
 
+def test_ocr_optional_and_graceful():
+    # OCR is strictly optional: ocr_available() must return a bool and, when
+    # tesseract is absent, an OCR read must return None WITHOUT crashing.
+    assert isinstance(rr.ocr_available(), bool)
+    if not rr.opencv_available():
+        print("SKIP ocr: opencv/numpy unavailable")
+        return
+    import numpy as np
+    reader = rr.ResultReader(1912, 974, layout="landscape", ocr_verify=True)
+    assert reader.ocr_verify is True
+    frame = np.zeros((974, 1912, 3), dtype=np.uint8)
+    # Never raises, regardless of whether tesseract is installed.
+    val = reader._ocr_read_number(frame, reader.boxes[0])
+    assert val is None or val in rr.NUMS
+    if not rr.ocr_available():
+        assert val is None
+    print("OK OCR verification is optional and degrades gracefully")
+
+
 def test_replay_video():
     if not rr.opencv_available():
         print("SKIP replay: opencv/numpy unavailable")
@@ -58,5 +77,6 @@ def test_replay_video():
 if __name__ == "__main__":
     test_layout_detection()
     test_cells_built()
+    test_ocr_optional_and_graceful()
     test_replay_video()
     print("ALL CHECKS PASSED")

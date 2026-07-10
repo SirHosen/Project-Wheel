@@ -47,6 +47,30 @@ def status_line():
             "  -> pip install -r requirements-vision.txt")
 
 
+_OCR_STATE = {"checked": False, "available": False}
+
+
+def ocr_available():
+    """True only if opencv + pytesseract + the tesseract binary are ALL present.
+    Cached after the first check. OCR is a purely OPTIONAL cross-check; the
+    brightness-based reader works fully without it, so this returns False
+    (never raises) when anything is missing.
+    """
+    if _OCR_STATE["checked"]:
+        return _OCR_STATE["available"]
+    ok = False
+    if opencv_available():
+        try:
+            import pytesseract
+            pytesseract.get_tesseract_version()
+            ok = True
+        except Exception:
+            ok = False
+    _OCR_STATE["checked"] = True
+    _OCR_STATE["available"] = ok
+    return ok
+
+
 def _landscape_cells():
     """9 numbers in a horizontal result row, evenly spaced (from config)."""
     c = RESULT_LANDSCAPE
@@ -85,7 +109,7 @@ class ResultReader:
     def __init__(self, frame_w, frame_h, layout=None, fps=15,
                  baseline_window_s=8.0, margin=26.0, stable_frames=3,
                  rearm_ratio=0.4, min_separation=RESULT_MIN_SEPARATION,
-                 cells_override=None):
+                 cells_override=None, ocr_verify=False, ocr_strict=False):
         self.w = int(frame_w)
         self.h = int(frame_h)
         self.layout = layout or detect_layout(frame_w, frame_h)
@@ -111,6 +135,10 @@ class ResultReader:
         self._cand = None
         self._cand_streak = 0
         self._spin_index = 0
+        # OCR is an OPTIONAL digit cross-check (see ocr_available). ocr_strict
+        # implies ocr_verify; strict mode vetoes any detection OCR can't confirm.
+        self.ocr_strict = bool(ocr_strict)
+        self.ocr_verify = bool(ocr_verify) or self.ocr_strict
 
     def _cell_brightness(self, frame, box):
         _, x0, y0, x1, y1 = box
@@ -123,6 +151,36 @@ class ResultReader:
         roi = frame[y0:y1, x0:x1]
         v = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)[:, :, 2]
         return float(np.mean(v))
+
+    def _ocr_read_number(self, frame, box):
+        """Optional OCR cross-check: read the digits inside a cell. Returns the
+        integer if it is one of the known numbers, else None. Never raises."""
+        if not ocr_available():
+            return None
+        try:
+            import pytesseract
+            _, x0, y0, x1, y1 = box
+            x0, y0 = max(0, x0), max(0, y0)
+            x1, y1 = min(self.w, x1), min(self.h, y1)
+            if x1 <= x0 or y1 <= y0:
+                return None
+            roi = frame[y0:y1, x0:x1]
+            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            gray = cv2.resize(gray, None, fx=3.0, fy=3.0,
+                              interpolation=cv2.INTER_CUBIC)
+            _, th = cv2.threshold(gray, 0, 255,
+                                  cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            if float(np.mean(th)) > 127:   # ensure dark digits on light bg
+                th = cv2.bitwise_not(th)
+            txt = pytesseract.image_to_string(
+                th, config="--psm 7 -c tessedit_char_whitelist=0123456789")
+            digits = "".join(ch for ch in txt if ch.isdigit())
+            if not digits:
+                return None
+            val = int(digits)
+            return val if val in NUMS else None
+        except Exception:
+            return None
 
     def update(self, frame, t=None):
         """Feed one BGR frame. Returns an event dict once per detected spin,
@@ -163,9 +221,19 @@ class ResultReader:
                 self._spin_index += 1
                 self._armed = False
                 self._cand_streak = 0
+                ocr_number = None
+                ocr_confirmed = None
+                if self.ocr_verify and ocr_available():
+                    ocr_number = self._ocr_read_number(frame, self.boxes[best])
+                    ocr_confirmed = (ocr_number == number
+                                     if ocr_number is not None else False)
+                    if self.ocr_strict and ocr_confirmed is False:
+                        # Strict mode: veto a detection OCR cannot confirm.
+                        return None
                 return {"number": number, "t": t, "spin_index": self._spin_index,
                         "spike": best_spike, "separation": best_spike - second_spike,
-                        "layout": self.layout}
+                        "layout": self.layout, "ocr": ocr_number,
+                        "ocr_confirmed": ocr_confirmed}
         else:
             self._cand = None
             self._cand_streak = 0

@@ -28,6 +28,24 @@ def test_house_edge():
     print("OK every number is -EV on the fair wheel:", {n: round(evs[n], 3) for n in VALID_NUMBERS})
 
 
+def test_incomplete_beta_and_quantile():
+    # betai is the Beta(a, b) CDF: monotone in x, anchored at 0 and 1.
+    assert abs(wheel.betai(2, 3, 0.0) - 0.0) < 1e-12
+    assert abs(wheel.betai(2, 3, 1.0) - 1.0) < 1e-12
+    # Beta(1, 1) is Uniform(0, 1): CDF(x) == x.
+    for x in (0.1, 0.37, 0.9):
+        assert abs(wheel.betai(1, 1, x) - x) < 1e-6
+    # Symmetry: Beta(a, a) has median 0.5.
+    assert abs(wheel.beta_quantile(4, 4, 0.5) - 0.5) < 1e-4
+    # Quantile is a true inverse of the CDF (round-trip).
+    for p in (0.025, 0.5, 0.975):
+        q = wheel.beta_quantile(3, 7, p)
+        assert abs(wheel.betai(3, 7, q) - p) < 1e-4
+    # normal_cdf turns the 95% z-score into ~0.975 upper mass.
+    assert abs(wheel.normal_cdf(1.96) - 0.975) < 1e-3
+    print("OK incomplete beta CDF + Beta quantile + normal_cdf")
+
+
 def test_chi_square():
     # Observed == expected -> chi2 ~ 0, p ~ 1.
     exp = {n: 10.0 for n in VALID_NUMBERS}
@@ -46,5 +64,6 @@ if __name__ == "__main__":
     test_design_distribution()
     test_payout_and_breakeven()
     test_house_edge()
+    test_incomplete_beta_and_quantile()
     test_chi_square()
     print("ALL CHECKS PASSED")

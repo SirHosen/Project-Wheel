@@ -42,6 +42,41 @@ def _snapshot(region, monitor):
     return 0
 
 
+def _auto_calibrate(region, monitor):
+    """Grab one frame, auto-detect the 9 result cells, and print a
+    cells_override you can pass to ResultReader (or eyeball against config)."""
+    import os
+    from config import RUNTIME_DIR
+    from vision.capture import ScreenSource
+    from vision.result_reader import ResultReader, detect_layout
+    from vision import calibrate
+    import cv2
+    with ScreenSource(region=region, monitor=monitor) as src:
+        w, h = src.size
+        frame = src.grab()
+    layout = detect_layout(w, h)
+    cells = calibrate.find_cells(frame, layout=layout)
+    if cells is None:
+        print("[auto-calibrate] Could not find 9 clean cells automatically.")
+        print("[auto-calibrate] Fall back to --snapshot + manual config nudging.")
+        return 2
+    print(f"[auto-calibrate] layout={layout}  frame={w}x{h}")
+    print("[auto-calibrate] Detected cells (number, fx, fy):")
+    for number, fx, fy in cells:
+        print(f"    ({number:>2}, {fx:.4f}, {fy:.4f})")
+    box = calibrate.mean_box_fraction(frame, layout=layout)
+    if box:
+        print(f"[auto-calibrate] suggested bw={box[0]:.4f}  bh={box[1]:.4f}")
+    # Save a snapshot annotated with the AUTO-detected boxes for a visual check.
+    reader = ResultReader(w, h, layout=layout, cells_override=cells)
+    os.makedirs(RUNTIME_DIR, exist_ok=True)
+    out = os.path.join(RUNTIME_DIR, "calibration.png")
+    cv2.imwrite(out, reader.annotate(frame))
+    print(f"[auto-calibrate] annotated snapshot -> {out}")
+    print("[auto-calibrate] If the boxes sit on the numbers, you're calibrated.")
+    return 0
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description="Auto-watch screen reader + live panel")
     p.add_argument("--region", default=None, help="Screen region 'x,y,w,h'. Empty = whole monitor.")
@@ -51,6 +86,9 @@ def main(argv=None):
     p.add_argument("--list-monitors", action="store_true", help="Print monitors and exit.")
     p.add_argument("--snapshot", action="store_true",
                    help="Save an annotated calibration frame and exit.")
+    p.add_argument("--auto-calibrate", action="store_true",
+                   help="Auto-detect the 9 cells from one frame and print a "
+                        "ready-to-paste cells_override; also saves a snapshot.")
     args = p.parse_args(argv)
 
     from vision import capture
@@ -79,6 +117,9 @@ def main(argv=None):
 
     if args.snapshot:
         return _snapshot(region, args.monitor)
+
+    if args.auto_calibrate:
+        return _auto_calibrate(region, args.monitor)
 
     from app.panel import main as panel_main
     return panel_main(region=region, monitor=args.monitor, no_ui=args.no_ui,

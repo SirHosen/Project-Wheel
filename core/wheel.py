@@ -68,6 +68,79 @@ def gammq(a, x):
     return _gcf(a, x)
 
 
+# --- incomplete beta + Beta quantile (exact credible bands, no scipy) ------
+def _betacf(a, b, x, itmax=200, eps=3.0e-9, fpmin=1.0e-30):
+    """Continued-fraction core of the incomplete beta (Numerical Recipes)."""
+    qab, qap, qam = a + b, a + 1.0, a - 1.0
+    c = 1.0
+    d = 1.0 - qab * x / qap
+    if abs(d) < fpmin:
+        d = fpmin
+    d = 1.0 / d
+    h = d
+    for m in range(1, itmax + 1):
+        m2 = 2 * m
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + aa * d
+        if abs(d) < fpmin:
+            d = fpmin
+        c = 1.0 + aa / c
+        if abs(c) < fpmin:
+            c = fpmin
+        d = 1.0 / d
+        h *= d * c
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        if abs(d) < fpmin:
+            d = fpmin
+        c = 1.0 + aa / c
+        if abs(c) < fpmin:
+            c = fpmin
+        d = 1.0 / d
+        delta = d * c
+        h *= delta
+        if abs(delta - 1.0) < eps:
+            break
+    return h
+
+
+def betai(a, b, x):
+    """Regularized incomplete beta I_x(a, b) = CDF of Beta(a, b) at x."""
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    lbeta = _gammln(a) + _gammln(b) - _gammln(a + b)
+    bt = math.exp(a * math.log(x) + b * math.log(1.0 - x) - lbeta)
+    if x < (a + 1.0) / (a + b + 2.0):
+        return bt * _betacf(a, b, x) / a
+    return 1.0 - bt * _betacf(b, a, 1.0 - x) / b
+
+
+def beta_quantile(a, b, p, eps=1e-10, itmax=200):
+    """Inverse Beta(a, b) CDF (the p-quantile) via bisection -- no scipy."""
+    if p <= 0.0:
+        return 0.0
+    if p >= 1.0:
+        return 1.0
+    lo, hi = 0.0, 1.0
+    for _ in range(itmax):
+        mid = 0.5 * (lo + hi)
+        if betai(a, b, mid) < p:
+            lo = mid
+        else:
+            hi = mid
+        if hi - lo < eps:
+            break
+    return 0.5 * (lo + hi)
+
+
+def normal_cdf(z):
+    """Standard normal CDF via erf. Used to turn a z-score (e.g. 1.96) into a
+    two-sided credible mass (~0.95) for the Beta quantile bands."""
+    return 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+
+
 def design_distribution(sequence=None, valid_numbers=None):
     """Fair probability of each number = (its segment count) / (total segments)."""
     sequence = sequence if sequence is not None else WHEEL_SEQUENCE

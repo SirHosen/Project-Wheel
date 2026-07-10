@@ -66,21 +66,35 @@ def main(argv=None):
     bt = OnlineBiasTracker()
     bt.observe_many(numbers)
     print(f"[bias] {bt.summary()['recommendation']}  |  {bt.bias_test()}")
+    # Fully Bayesian EV: report the FULL posterior uncertainty (not just a bound)
+    # for the most-observed number, incl. P(EV>0).
+    try:
+        post = bt.posterior()
+        ev = bt.ev_samples()
+        top_n = max(ev, key=lambda k: post[k]["mean"])
+        e = ev[top_n]
+        print(f"[bias] Bayesian EV of {top_n}: mean={e['ev_mean']:+.3f} "
+              f"[{e['ev_lo']:+.3f}, {e['ev_hi']:+.3f}]  "
+              f"P(EV>0)={e['prob_positive']:.2f}")
+    except Exception as ev_err:  # numpy missing etc. -- never block the run
+        print(f"[bias] Bayesian EV sampling skipped: {ev_err}")
+
+    # --- 2b) strategy comparison + probabilistic calibration --------------
+    # Runs WITHOUT PyTorch (baselines + frequency-model calibration); the LSTM
+    # rows/metrics are added automatically when PyTorch is installed.
+    try:
+        table = lstm.walk_forward_table(numbers)
+        print("[backtest] strategy comparison (walk-forward):")
+        print(lstm.format_backtest_table(table))
+        print(lstm.format_probabilistic_report(lstm.probabilistic_report(numbers)))
+    except ValueError as e:
+        print(f"[backtest] comparison skipped: {e}")
 
     # --- 3) + 4) the AI parts (need PyTorch) ------------------------------
     if not lstm.available():
         print("[train] " + lstm.status_line())
         print("[train] Skipping LSTM train/backtest. Install with: pip install -r requirements-ai.txt")
         return 0  # the honest non-AI checks above still ran
-
-    try:
-        report = lstm.walk_forward_backtest(numbers)
-        print(f"[backtest] model_acc={report['model_acc']:.3f}  "
-              f"baseline_acc={report['baseline_acc']:.3f}  "
-              f"lift={report['lift']:+.3f}")
-        print(f"[backtest] {report['verdict']}")
-    except ValueError as e:
-        print(f"[backtest] skipped: {e}")
 
     if not args.backtest_only:
         try:

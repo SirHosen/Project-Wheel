@@ -30,6 +30,12 @@ PRIOR_STRENGTH = len(WHEEL_SEQUENCE)   # 54 pseudo-spins of "the wheel is fair"
 CI_Z = 1.96                            # 95% confidence band
 EV_MARGIN = 0.05                       # require EV_lo > this to call it an edge
 MIN_OBS = 25                           # never claim bias/edge below this many spins
+# Multiple-testing correction for the per-number edge search. We test all 9
+# numbers at once, so an uncorrected 5% test would false-positive far too often.
+# The family-wide alpha is split across numbers (Sidak by default; Bonferroni
+# also available; "none" disables the correction).
+EDGE_FAMILY_ALPHA = 0.05
+MULTIPLE_TEST_CORRECTION = "sidak"     # "sidak" | "bonferroni" | "none"
 
 # --- LSTM (AI training playground) ----------------------------------------
 SEQUENCE_LENGTH = 10
